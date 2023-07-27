@@ -1,0 +1,616 @@
+---
+title: "EDTA_TEs"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+date: "2023-02-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2); theme_set(theme_bw()); theme_update(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+```
+
+#Run TE annotation in Bash
+## EDTA
+```{bash eval=FALSE, include=T}
+conda activate EDTA
+cd ~/Lab/Nanopore_chagas/MGE/EDTA_tula
+perl ../EDTA/EDTA.pl -genome ../../assembly/nd_v1_polish/genome.nextpolish.fa --sensitive 1 --anno 1 --evaluate 1\
+```
+
+# Datastep
+Read in gff of all annotated TEs from EDTA
+```{r}
+# Read the GFF of all the locations for for each one
+TE = read_tsv("../TE/EDTA_tula/genome.nextpolish.fa.mod.EDTA.TEanno.gff3",skip = 6, col_names = F, show_col_types = FALSE ) %>% 
+  rename(contig = X1, source = X2, seq_ontology = X3, start = X4, end = X5, score = X6, strand = X7, phase = X8, attributes = X9) %>% 
+  mutate(name = str_extract(attributes  ,"(?<=Name=).*")) %>%
+  mutate(name = str_extract(name , ".*(?=;Class)")) %>%
+  mutate(classification = str_extract(attributes  ,"(?<=Classification=)[:alpha:]*")) %>%
+  mutate(ltr_identity = str_extract(attributes, "(?<=ltr_identity=0.)[:digit:]*")) %>% 
+  mutate(identity =  str_extract(attributes, "(?<=Identity=0.)[:digit:]*")) %>% 
+  mutate(identity = ifelse(str_detect(attributes, "(?<=Identity=1)[:digit:]*"), 1, 
+                              paste0("0.", identity))) %>%
+  mutate(ltr_identity = ifelse(str_detect(attributes, "(?<=ltr_identity=1)[:digit:]*"), 1, 
+                           paste0("0.", ltr_identity))) %>% 
+  mutate(identity = as.numeric(ifelse(identity == "0.NA", NA, identity))) %>%
+  mutate(ltr_identity = as.numeric(ifelse(ltr_identity == "0.NA", NA, ltr_identity)) )%>% 
+  mutate(element_len = abs(start -end )) 
+```
+
+# Descriptive 
+## Basic stuff
+```{r}
+# How many unique TEs do we have?
+TE %>% 
+  select(name) %>% 
+  unique() %>% 
+  nrow()
+# how many of each type do we have?
+d1 = table(TE$seq_ontology) %>% as.data.frame() %>% 
+  rename(Total_number = Freq)
+
+# how many different ones of each type do we have
+TE %>% 
+  select(name, seq_ontology) %>% unique() %>% 
+  ggplot() + geom_bar(aes(x = 1, fill = seq_ontology), color = "black")
+
+dat = TE %>% 
+  select(name, seq_ontology) %>% unique()
+d2 = table(dat$seq_ontology) %>% as.data.frame() %>% 
+  rename(Unique_number = Freq)
+
+# length
+TE %>% 
+  ggplot() +geom_histogram(aes(x= element_len , fill = seq_ontology)) +scale_x_log10()
+
+# divergence from reference family
+TE %>% 
+  ggplot() + geom_histogram(aes(x = identity)) +facet_wrap(~classification)+
+  ggtitle("Divergence from reference family")
+
+TE %>% filter(classification == "LTR") %>% 
+  ggplot() + geom_histogram(aes(x = identity, fill = name), color = "black") +
+  geom_vline(xintercept = .98)+
+  facet_wrap(~name, scale = "free_y")+
+  ggtitle("Divergence from reference family, by LTR fam")
+
+#LTR divergence - this is not super useful bc its only the LTRs that were found with structural annotation , which is more error prone than homology annotation and maybe we can ignore. but worthwhile to try and find ltr divergence in all the others
+TE %>% filter(classification == "LTR") %>% select(ltr_identity, name) %>% unique() %>% 
+  ggplot() + geom_histogram(aes(x = ltr_identity))
+
+
+
+# Put them all together
+full_join(d1,d2, by = "Var1") %>%
+    filter(Var1 != "repeat_region") %>% 
+  pivot_longer(cols = c("Total_number", "Unique_number", ) ) %>% 
+  ggplot()+
+  geom_bar(aes(y = value, x = name, fill = Var1), color = "black", position = "dodge", stat = "identity") +
+  facet_wrap(~name, scales = "free")+
+  #theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  ggtitle("overview of recovered TEs")
+
+```
+
+
+## Genome percentage
+```{r}
+EDTA_sum = read.csv("../TE/EDTA_tula/EDTA_summary.csv")
+
+EDTA_sum%>% 
+  ggplot(aes(x = forcats::fct_rev(fct_reorder(Type, PercentMasked)), y = PercentMasked, fill = Subtype)) +
+  geom_col()+theme_bw(base_size = 25)+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+  
+EDTA_sum%>% 
+  ggplot(aes(x = forcats::fct_rev(fct_reorder(Type, bpMasked)), y = bpMasked, fill = Subtype)) +
+  geom_col()
+
+## for grant
+EDTA_sum%>% 
+  mutate(TE_class = case_when(Type == "LTR" ~ "RNA_TE",
+                              Type == "nonLTR" ~ "RNA_TE",
+                              Type == "TIR" ~ "DNA_TE",
+                              Type == "nonTIR" ~ "DNA_TE",
+                              TRUE ~ "Repeat_region")) %>% 
+  ggplot(aes(x = forcats::fct_rev(fct_reorder(TE_class, PercentMasked)), y = PercentMasked, fill = TE_class)) +
+  geom_col()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+
+## Misclassification rate
+```{r}
+read_delim("../TE/EDTA_tula/genome.nextpolish.fa.mod.EDTA.anno/genome.nextpolish.fa.mod.EDTA.TE.fa.stat.all.sum", delim = "\t",skip = 1) %>% 
+  arrange(Misclas_rate)
+```
+ 
+
+## Each chromasome's proportion of Transposonable elements
+Note: this doesn't accountfor nested TEs, so interpret carefully. The point is that most TE types exsit on all contigs.
+```{r}
+# Get information about each contig and it's length
+ass_len = Biostrings::readDNAStringSet("../assembly/nd_v1_polish/genome.nextpolish.fa")  %>%
+  as.data.frame() %>% 
+  mutate(length = nchar(x)) %>% 
+  select(length) %>% 
+  rownames_to_column(var = "contig_name") %>% 
+  mutate(seqid = str_extract(contig_name, "^.{9}")) %>% 
+  select(-contig_name)
+
+## put in lengths so i can sort by contig length
+TE %>% 
+  right_join(ass_len, by = c("contig" = "seqid")) %>% 
+  group_by(seq_ontology, contig) %>%  
+  filter(seq_ontology != "repeat_region") %>% 
+  mutate(sum_TE_len = (sum(element_len))) %>% 
+  select(sum_TE_len, seq_ontology, contig, length) %>% 
+  unique() %>% 
+  ungroup() %>% group_by(contig) %>% 
+  mutate(total_TE = (sum(sum_TE_len))) %>%
+  mutate(not_te = length - total_TE ) %>% 
+  unique() %>% 
+  pivot_wider(names_from = c(seq_ontology ), values_from = sum_TE_len ) %>% 
+  pivot_longer(names_to ="seq_ontology",
+               cols = c(-contig, -length, -total_TE), values_to = "sum_TE_len" , values_drop_na = T) %>% 
+  ggplot()+
+  geom_bar(aes( y = sum_TE_len,
+                fill = seq_ontology, 
+                x = fct_rev(fct_reorder(contig, length))), position = "stack", stat = "identity", color = "black") +
+  theme(legend.position = "bottom")
+#+  scale_y_log10()
+
+
+table(TE$classification, TE$seq_ontology)
+
+```
+
+
+
+
+# Distance from ORF to TE
+
+## Any ORF
+```{r}
+# convert augustus gff to a bed in bash using bedtools like so:
+## convert2bed --input=gff < augustus.gff > augustus.bed
+####
+orf_bed = read_tsv("../call_orfs/cds.bed", col_names = F) %>% 
+  filter(X8 == "mRNA") %>% 
+  select(X1, X2, X3, X6, X10) %>%   unique() %>% 
+  rename(contig = X1, start = X2, end = X3, strand = X6, gene = X10) %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(gene_id = paste0(contig, ":", start,"-",end))
+
+###
+```
+
+Now the loop - for all orf
+This is a very long step, so at the end i saved the CSV so I can just load it in the next chunk
+```{r eval=FALSE, warning=FALSE, include=T}
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  filter(seq_ontology != "repeat_region") %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+dat2 =  orf_bed %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+#write.csv(closest_TE_orf %>% unique(), "./clostestTE_anyCDS.csv")
+
+```
+
+
+## Just MGF memeber
+### from CDS
+```{r eval=FALSE, warning=FALSE, include=T}
+
+surf_bed = read_tsv("../call_orfs/call_surface_genes/MGF_cds.bed",col_names = F) %>%
+  select(X1, X2, X3, X4) %>%   unique() %>% 
+  rename(contig = X1, start = X2, end = X3, gene = X4) %>% 
+  mutate(source = "surf")
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+dat2 =  surf_bed %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+write.csv(closest_TE_orf %>% unique(), "./clostestTE_MGFcds.csv")
+
+```
+###### 
+###From WGS
+```{r eval=FALSE, warning=FALSE, include=T}
+
+surf_bed = read_tsv("../call_orfs/call_surface_genes/MGF_wg.bed", col_names = F) %>%
+  select(X1, X2, X3, X4, X5) %>%   unique() %>% 
+  rename(contig = X1, start = X2, end = X3, strand = X4, gene = X5) %>% 
+  mutate(source = "surf")
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+dat2 =  surf_bed %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+write.csv(closest_TE_orf %>% unique(), "./clostestTE_MGFwgs.csv")
+
+```
+## Histogram
+```{r}
+
+## Graph together
+
+closest_TE_orf = read.csv("./clostestTE_anyCDS.csv") %>% select(-X)
+closest_TE_surf = read.csv("./clostestTE_MGFcds.csv")  %>% select(-X)
+closest_TE_surf_WGS = read.csv("./clostestTE_MGFwgs.csv")  %>% select(-X)
+
+dat = closest_TE_orf %>% unique() %>%
+  mutate(source=  "ORFs") %>% 
+  #bind_rows(closest_TE_surf_WGS %>% mutate(source = "MGF_WGS")) %>% 
+  #bind_rows(closest_TE_HSP %>% mutate(source = "HSP"))
+  bind_rows(closest_TE_surf %>% mutate(source = "MGF"))   
+ 
+dat %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance) , fill = source))+
+  facet_wrap(~source, scales = "free_y", nrow = 2)
+
+dat %>% 
+  mutate(source = factor(source, levels = c("ORFs" , "MGF"))) %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance), fill = source ), alpha = .5, position = "identity" , color = "black")+
+  scale_fill_brewer(palette = "Set1")
+
+dat %>% 
+  ggplot()+ geom_histogram(aes(x =  (closest_TE_distance), fill = source ), alpha = .5, position = "identity" , color = "black")+
+  scale_fill_brewer(palette = "Set1")
+
+
+closest_TE_orf %>% ggplot()+ geom_histogram(aes(x =  (closest_TE_distance) ))+scale_x_log10()
+```
+
+## histogram by MGF
+```{r}
+ggplot()+ 
+  geom_histogram(data = closest_TE_orf, 
+                 aes(x= log10(closest_TE_distance)), alpha = .2, color = "black"
+                     )+
+  geom_histogram(data = 
+                   surf_bed %>% 
+                        mutate(surf_id = paste0(contig, ":",start,"-",end)) %>% 
+                        left_join(closest_TE_surf),
+  aes(x =  log10(closest_TE_distance), fill = gene ),
+                 alpha = .6, color = "black")+
+    scale_fill_brewer(palette = "Set1")
+```
+
+
+# Null distance distrbution
+1.a completely random start and stop within the length of a contig
+
+```{r eval=FALSE, warning=FALSE, include=T}
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+#Try first with a completely random 
+dat2 =  orf_bed %>% 
+  mutate(start_random = abs(rnorm(n = nrow(orf_bed) ,
+                              mean = mean(orf_bed$start), 
+                              sd = sd(orf_bed$start)
+                              ))) %>% 
+  mutate(end_random = abs(rnorm(n = nrow(orf_bed) , 
+                              mean = mean(orf_bed$end), 
+                              sd = sd(orf_bed$end)
+                              ))) %>% 
+  mutate(surf_id = paste0(contig, ":", start_random,"-",end_random)) %>% 
+  pivot_longer(cols = c("start_random", "end_random"), names_to = "pos_id", values_to = "position_random") 
+
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf_random = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+closest_TE_orf_random %>% 
+ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance)), alpha = .5, position = "identity" , color = "black") +ggtitle("dist btwn a random spot on any contig and nearest TE (rnorm mean(start), sd(start)")
+closest_TE_orf_random %>% 
+ggplot()+ geom_histogram(aes(x =  (closest_TE_distance)), alpha = .5, position = "identity" , color = "black")
+
+closest_TE_orf_random %>% write.csv("./closest_TE_allRandom.csv")
+
+
+
+```
+
+
+2. Shuffeling  the start and the end of every ORF ON ANY CONTIG
+
+```{r eval=FALSE, warning=FALSE, include=T}
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+#Try first with a completely random 
+dat2 =  orf_bed %>% 
+  mutate(start_random =sample(start)) %>% 
+  mutate(end_random = sample(end)) %>% 
+  mutate(surf_id = paste0(contig, ":", start_random,"-",end_random)) %>% 
+  pivot_longer(cols = c("start_random", "end_random"), names_to = "pos_id", values_to = "position_random") 
+
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf_random = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+closest_TE_orf_random %>% 
+ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance)), alpha = .5, position = "identity" , color = "black") +ggtitle("distance between a shufled start and stop and nearest TE")
+closest_TE_orf_random %>% 
+ggplot()+ geom_histogram(aes(x =  (closest_TE_distance)), alpha = .5, position = "identity" , color = "black")
+
+closest_TE_orf_random %>% write.csv("./closest_TE_OrfShuffled.csv")
+```
+
+
+##null distances together
+```{r}
+shuf = read.csv("./closest_TE_OrfShuffled.csv")
+random = read.csv("./closest_TE_allRandom.csv")
+
+shuf %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance)), alpha = .5, position = "identity" , color = "black") +
+  ggtitle("distance between a shufled start and stop and nearest TE")
+random %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance)), alpha = .5, position = "identity" , color = "black") +
+  ggtitle("dist btwn a random spot on any contig and nearest TE (rnorm mean(start), sd(start)")
+
+# Just randomize the Closest_TE_distance variable after all the math is done - if THAT value was normally distributed, what would the distribution look like?
+test = closest_TE_surf %>% filter(closest_TE_distance != Inf)
+
+rnorm(n = nrow(closest_TE_orf), 
+      mean = mean(test$closest_TE_distance), 
+      sd = sd(test$closest_TE_distance)  ) %>% 
+  as.data.frame() %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(`.`)), alpha = .5, position = "identity" , color = "black") +ggtitle(" Normally distributed clostest_TE_distance w same mean and SD")
+
+rlnorm(n = nrow(closest_TE_orf), 
+      mean = mean(test$closest_TE_distance), 
+      sd = sd(test$closest_TE_distance)  ) %>% 
+  as.data.frame() %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(`.`)), alpha = .5, position = "identity" , color = "black") +ggtitle(" Log_normal distributed clostest_TE_distance w same mean and SD")
+
+```
+
+
+
+# What orfs are in peak 2?
+defining peak 2 as more than 1500 bp away
+
+## GC
+```{r}
+# get the Orf_ID
+
+test = dat %>% 
+  filter(closest_TE_distance >10000) %>% 
+  left_join(orf_bed %>% select(-contig), by = c("surf_id" = "gene_id")) %>% 
+  mutate(transcript_id = paste0(contig, ".", gene, ".t1"))
+
+# Write the list of orfs in peak2
+#test$transcript_id %>% as.data.frame %>% unique() %>%  write_csv("../Surface_TE_overlap/ORF_peak2.txt")
+#Get the fasta
+#cd /home/jill/Lab/Nanopore_chagas/Surface_TE_overlap
+#seqkit grep -f ORF_peak2.txt ../call_orfs/augustus/augustus.codingseq > ORF_peak2.fasta
+#seqkit grep -v -f ORF_peak2.txt ../assembly/canu/canu_chrom.fasta > ORF_peak1.fasta
+
+#Caluclate GC
+#peak 1
+Biostrings::readDNAStringSet("../Surface_TE_overlap/ORF_peak1.fasta") %>% 
+  Biostrings::letterFrequency(letters = "GC", as.prob = T) %>% 
+  mean()
+#peak 2
+Biostrings::readDNAStringSet("../Surface_TE_overlap/ORF_peak2.fasta") %>% 
+  Biostrings::letterFrequency(letters = "GC", as.prob = T) %>% 
+  mean()
+#surface genes
+Biostrings::readDNAStringSet("../call_orfs/call_surface_genes/surface_genes.fasta") %>% 
+  Biostrings::letterFrequency(letters = "GC", as.prob = T) %>% 
+  mean()
+# GC is identical
+```
+

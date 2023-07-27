@@ -1,0 +1,558 @@
+---
+title: "Assembly Quality"   
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+date: "2023-02-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2); theme_set(theme_bw()); theme_update(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+library(forcats)
+```
+
+assembly took 3317344691 bases (3.3GB)
+Genome scope
+```{bash eval =FALSE, include = T}
+Rscript genomescope.R allreads_k21.histo  21 300 k21
+```
+
+genome scope predicts 49MB Haploid genome - though it's known to underestimate it
+
+# Busco
+### run busco
+```{bash eval=FALSE, include=T}
+busco -i ../../../assembly/consensus.fasta -l euglenozoa_odb10 -o polish_busco -m genome -f
+```
+
+### read in data
+```{r warning=FALSE}
+flye = read_tsv("../busco/flye/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE) %>% 
+  mutate(source = "flye")
+canu = read_tsv("../busco/canu_euglena/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "canu")
+canu_nodup = read_tsv("../busco/canu_nobub/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "canu_nodup")
+ClBrener= read_tsv("../busco/ref_busco/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "ClBrener")
+Sylvio = read_tsv("../busco/ref_sylvio_eug/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "Sylvio")
+Bernice = read_tsv("../busco/brenice/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "Bernice")
+BrazilA4 = read_tsv("../busco/BrazilA4_eug/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "BrazilA4")
+DM28c= read_tsv("../busco/Dm28_eug/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "DM28c")
+Y = read_tsv("../busco/Yc6_eug/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "Y")
+Bug2148 = read_tsv("../busco/Bug_eug/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "Bug2148")
+TCC = read_tsv("../busco/TCC/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "TCC")
+G = read_tsv("../busco/G/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "G")
+strain_231 = read_tsv("../busco/strain_231/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "231")
+Colombiana = read_tsv("../busco/Colombiana/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "Colombiana")
+
+CL = read_tsv("../busco/Cl/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "CL")
+Arequipa = read_tsv("../busco/Arequipa/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "Arequipa")
+JRcl4 = read_tsv("../busco/JRcl4/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "JRcl4")
+SC43 = read_tsv("../busco/SC43//run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "SC43")
+
+nd_v1 = read_tsv("../busco/nextdenovo/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "nd_v1")
+nd_v2 = read_tsv("../busco/nd_v2/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "nd_v2")
+nd_v1_polish = read_tsv("../busco/nd_v2/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "nd_v1_polish")
+nd_v2_polish = read_tsv("../busco/tula_ndv2_polish/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "nd_v2_polish")
+nd_v4_polish = read_tsv("../busco/tula_ndv4_polish/run_euglenozoa_odb10/full_table.tsv", skip = 2,show_col_types = FALSE)%>% 
+  mutate(source = "nd_v4_polish")
+euglena_busco = rbind( ClBrener,Sylvio, Bernice , BrazilA4, Y, DM28c, Bug2148, TCC, Colombiana, strain_231, G, CL, Arequipa, JRcl4, SC43,
+                       #flye, canu, canu_nodup, 
+                       #nd_v1, nd_v2,  nd_v2_polish, nd_v4_polish,
+                       nd_v1_polish)
+```
+
+## Compare which ones are missing
+```{r}
+## NB: for now im assuming that duplicated is complete bc i cant figure out right now how to fix dups hah
+p = euglena_busco %>% 
+  mutate(Status = ifelse(Status == "Duplicated", "Complete", Status)) %>% 
+  mutate(Status_numeric = case_when(
+    Status == "Complete" ~ 3,
+    Status == "Fragmented" ~ 1,
+    Status == "Missing" ~ 0
+  )) %>% 
+  select(`# Busco id`, source, Status_numeric) %>% unique() %>% 
+  pivot_wider( names_from = source, values_from = Status_numeric) %>%
+  rename("Busco" = `# Busco id`) %>% 
+  column_to_rownames(var = "Busco") %>% 
+  as.matrix() %>% 
+  pheatmap::pheatmap(cluster_cols = F, color=colorRampPalette(c("tomato3", "yellow", "steelblue3"))(10))
+
+
+p = euglena_busco %>% 
+  #mutate(Status = ifelse(Status == "Duplicated", "Complete", Status)) %>% 
+  mutate(Status_numeric = case_when(
+    Status == "Complete" ~ 2,
+    Status == "Duplicated" ~ 3,
+    Status == "Fragmented" ~ 1,
+    Status == "Missing" ~ 0
+  )) %>% 
+  select(`# Busco id`, source, Status_numeric) %>% unique() %>% 
+  pivot_wider( names_from = source, values_from = Status_numeric) %>%
+  rename("Busco" = `# Busco id`) %>% 
+  column_to_rownames(var = "Busco") %>% 
+  select(ClBrener, Sylvio,  Colombiana,  `231`, G, Arequipa, JRcl4, SC43, CL,
+                                         BrazilA4, Y, Bernice ,DM28c, TCC, Bug2148,
+                                          nd_v1_polish) %>%  
+  as.matrix() %>% 
+  pheatmap::pheatmap( cluster_cols = F, 
+                      cluster_rows = F,
+                      color=colorRampPalette(c("tomato3", "gold", "steelblue3", "dodgerblue4"))(10))
+
+```
+Note that actually flye looks better 
+
+# Asses genome quality
+starting with 
+3317344691 for the assembly, all the reads
+3189601704 for the no KDNA assembly 
+(meaning about 3.8% of the bases are minicircles! that's good...)
+## starting with ours
+```{bash eval=FALSE, include=T}
+conda activate asstests
+assembly-stats genome 
+```
+
+## now the references we compare against
+```{bash eval=FALSE, include=T}
+assembly-stats TriTrypDB-61_TcruziSylvioX10-1_Genome.fasta 
+assembly-stats TriTrypDB-61_TcruziDm28c2018_Genome.fasta
+# etc etc 
+# then manuallly put them in an csv
+```
+
+
+
+# Check for contaminants
+```{bash eval=FALSE, include=T}
+ ~/bbmap/sendsketch.sh records=1 mode=sequence format=3 consensus.fasta > send_sketch.out
+```
+It tells us we have some E coli, but as we'll see later, only on the contig that contains the LacZ
+
+
+# Clean Assembly 
+## rename
+Canu gives really nice descriptive names, but that's problematic long term
+```{bash eval=FALSE, include=T}
+cd blah blah
+seqkit replace -p "\s.+" ./TriTrypDB-61_TcruziBrazilA4_Genome.fasta >Brazil_genome_clean.fasta
+seqkit replace -p "\s.+" ./nextdenovo_assembly.fasta >assembly_nd_clean.fasta
+```
+
+# Genome size compatisons
+Compare Flye assembly to Canu whole assembly to only the chromasomal contigs
+```{r}
+flye_lengths = Biostrings::readDNAStringSet("../assembly/flye/assembly.fasta")  %>%
+  as.data.frame() %>% 
+  mutate(length = nchar(x)) %>% 
+  select(length) %>% 
+  mutate(source = "flye")
+nd_chrom_lengths = Biostrings::readDNAStringSet("../assembly/nd_v1_polish/genome.nextpolish.fa")  %>%
+  as.data.frame() %>% 
+  mutate(length = nchar(x)) %>% 
+  select(length) %>% 
+  mutate(source = "nd_chrom")
+
+```
+
+## Contig Length Histogram
+```{r}
+rbind(flye_lengths,nd_chrom_lengths ) %>% 
+  ggplot()+
+  geom_histogram(aes(x = length/1000, fill = source), position = "identity", alpha = 0.2, color ="black")+
+  ggtitle("Contig lengths for each assembly, in MB")
+
+
+rbind(flye_lengths,nd_chrom_lengths  ) %>% 
+  ggplot()+
+  geom_histogram(aes(x = length, fill = source), position = "identity", alpha = 0.5, color ="black")+
+  scale_x_log10()+
+  scale_fill_manual(values = c("steelblue3", "goldenrod1", "tomato1"))+
+  ggtitle("Contig lengths for each assembly, logscale")
+```
+
+## Cumulative sum
+Histogram of the read lengths comparing the Canu and Fyle assembly.
+Overall, Fyle has Many many short contigs, but also has a few more large ones, which leads to the highr N50.
+What's interesting is the apparent bimodal distribution of read legnths. My best guess is that the reads in the longer distrubtion are all haploid segments, while the shorter ones are diploid segments - regions of heterozyogisty interupt the long reads to produce a new contig? is that how it works?
+```{r}
+dat = rbind(flye_lengths %>% 
+              arrange(length), 
+            nd_chrom_lengths %>% 
+              arrange(length))
+dat$index = 1:nrow(dat)
+
+dat = cbind(flye_lengths$length, nd_chrom_lengths$length) %>% 
+  as.data.frame()
+#plot(cumsum(flye_lengths$length))
+#plot(cumsum(canu_lengths$length))
+
+ggplot()+
+  geom_point(data = nd_chrom_lengths , aes(x = 1:75, y = cumsum(length)), color = "steelblue3", alpha =1)+
+  geom_point(data = flye_lengths , aes(x = 1:nrow(flye_lengths), y = cumsum(length)), color = "tomato1", alpha = 1) +
+  ggtitle("Cumulative sum of contig lengths")+
+  xlab("Contig Index")
+
+nd_chrom_lengths %>% 
+  rownames_to_column() %>% 
+  select(length, source) %>% 
+  arrange(length) %>% head(n=10)
+flye_lengths %>% 
+  rownames_to_column() %>% 
+  select(length, source) %>% 
+  arrange(length) %>% head(n=10)
+```
+
+
+## Longest contigs, visual
+```{r}
+library(forcats)
+nd_chrom_lengths %>% 
+  rownames_to_column() %>% 
+  arrange(-length) %>% 
+  rename(contig_name = rowname) %>% 
+  ggplot()+
+  geom_col(aes(y = length, x = fct_rev(fct_reorder(contig_name, length))))+
+  theme(axis.text.x = element_blank())+
+  ggtitle("contig lengths, ND_v1")
+```
+# LacZ
+```{bash eval=FALSE, include=T}
+ blastn -query ./lacZ_ref.fasta -subject ../genome.nextpolish.fa -outfmt 6 -out lacz_from_assem.out
+# ctg000730 is the only one that hits BUT its not assembled alone
+## from a range within one of the chromasomes
+
+#Make a bed by hand in sublime text
+ctg000730	AUGUSTUS	gene	1650041	1704609	0.95	+	.
+
+Use bedtools toget that region
+bedtools getfasta -fi ../genome.nextpolish.fa -bed ./lacz_assem.bed > lacz_asm.fasta
+```
+
+# Mapping raw reads to assembly
+## Bash stuff
+```{bash eval=FALSE, include=T}
+# on rockfish
+minimap2 -ax map-ont ./nextdenovo_assembly.fasta ../raw_no_kdna/all_chrom.fastq -t 48 --secondary=no | samtools sort -o RawtoND_chrom.bam
+
+# on moira
+samtools coverage
+
+```
+
+# coverage stats
+samtools coverage- average across a contig. This one is raw reads to the polished assembly. I think maybe the mapping was stringent and the "read error correction" that the polisher did maybe actually changed too much so now the raw reads dont map to certain areas of the assembly.
+
+```{r}
+dat = read.table("../assembly/nd_v1_polish/raw_to_asm.tsv") %>% 
+  rename(contig_name = V1, start = V2, end = V3, num_reads = V4, cov_bases = V5, coverage = V6, mean_depth = V7, mean_baseq = V8, mean_mapq = V9)
+   
+dat %>% 
+  ggplot() +
+  geom_histogram(aes(x= coverage))
+
+dat %>% 
+  ggplot() +
+  geom_histogram(aes(x= mean_depth)) +
+  geom_vline(xintercept = mean(dat$mean_depth), color = "red")+
+  geom_vline(xintercept = median(dat$mean_depth), color = "blue")+
+  annotate("text", x = 500, y = 10, label = paste0("Mean depth ", mean(dat$mean_depth)), color = "red") +
+  annotate("text", x = 500, y = 12, label = paste0("Median depth ", median(dat$mean_depth)), color = "blue")+ 
+  ggtitle("Histogram for mean_depth of each contig")
+
+dat %>% 
+  filter(contig_name != "ctg000130") %>% 
+  ggplot() +
+  geom_histogram(aes(x= mean_depth)) +
+  geom_vline(xintercept = mean(dat$mean_depth), color = "red")+
+  geom_vline(xintercept = median(dat$mean_depth), color = "blue")+
+  annotate("text", x = 100, y = 10, label = paste0("Mean depth ", mean(dat$mean_depth)), color = "red") +
+  annotate("text", x = 100, y = 12, label = paste0("Median depth ", median(dat$mean_depth)), color = "blue")+ 
+  geom_histogram(aes(x= mean_depth), binwidth = 5) +
+  ggtitle("Histogram for mean_depth of each contig, removing outlier")
+
+mean(dat$mean_depth)
+
+
+```
+
+
+# CDS
+## reference CDSes
+```{r}
+
+cds1 = Biostrings::readDNAStringSet("../../reference_genomes/TriTrypDB-61_TcruziCLBrenerEsmeraldo-like_AnnotatedCDSs.fasta")  %>% 
+  as.data.frame() %>% 
+  mutate(length = nchar(x)) %>% 
+  select(-x) %>% mutate(strain = "CLBrenEsm")
+cds2 = Biostrings::readDNAStringSet("../../reference_genomes/TriTrypDB-61_TcruziBrazilA4_AnnotatedCDSs.fasta")  %>% 
+  as.data.frame() %>% 
+  mutate(length = nchar(x)) %>% 
+  select(-x) %>% mutate(strain = "BrazilA4")
+cds3 = Biostrings::readDNAStringSet("../../reference_genomes/TriTrypDB-61_TcruziBrazilA4_AnnotatedCDSs.fasta")  %>% 
+  as.data.frame() %>% 
+  mutate(length = nchar(x)) %>% 
+  select(-x) %>% mutate(strain = "TCC")
+# brazil_cds = read.delim("../../reference_genomes/TriTrypDB-63_TcruziBrazilA4.gff", sep='\t', comment='#', col.names = c('contig', 'source', 'feature', 'start', 'end', 'score', 'strand', 'frame', 'attribute'))  %>%  filter(feature=="protein_coding_gene")
+```
+
+## Augsutus 
+Run on web server
+```{r}
+augustus= read.delim("../call_orfs/predictions/augustus/augustus.gtf", sep='\t', comment='#', col.names = c('contig', 'source', 'feature', 'start', 'end', 'score', 'strand', 'frame', 'attribute'))
+
+table(augustus$feature)
+augustus_transcript = augustus %>%  filter(feature=="transcript")
+augustus_gene = augustus %>%  filter(feature=="gene")
+
+CDS = augustus_transcript %>% 
+  mutate(length = end-start) %>% 
+  mutate(strain = "Augustus") %>% select(length, strain)
+rbind (CDS, 
+       cds1,
+       cds2, 
+       #brazil_cds %>% mutate(length = end-start) %>%   mutate(strain = "b_gff") %>% select(length, strain)
+       cds3
+       ) %>% 
+  ggplot(aes(x=length , fill = strain)) +
+  scale_fill_brewer(palette = "Set1") +
+  geom_histogram(position = "identity", alpha = .3,  color = "black") +scale_x_log10() +
+  ggtitle("Predicted CDS lengths of whole genomes")
+
+## Make a table of strain genome sizes
+strain_genome_size = data.frame(strain = c("Bug", "CLBrenEsm", "Dm","Sylv", "Augustus", "Y", "BrazilA4", "TCC"),
+                                size = c(56077138, 33071242, 54160060, 42072610, 48450618, 39698620 , 45560000, 87600000))
+
+## Percent of genome that is coding
+rbind(CDS, cds1,cds2, cds3) %>% 
+  group_by(strain) %>% 
+  summarise(Orf_length = sum(length)) %>% 
+  left_join(strain_genome_size, by = "strain")  %>% 
+  mutate(percent_coding = (Orf_length/size) *100)
+
+```
+
+## Liftoff
+```{bash eval=FALSE, include=T}
+liftoff ../assembly/nd_v1_polish/genome.nextpolish.fa ../../reference_genomes/TriTrypDB-60_TcruziCLBrenerEsmeraldo-like_Genome.fasta -g ../../reference_genomes/TriTrypDB-63_TcruziCLBrenerEsmeraldo-like.gff -o Tula_clbren
+
+
+liftoff ../assembly/nd_v1_polish/genome.nextpolish.fa ../../reference_genomes/TriTrypDB-61_TcruziBrazilA4_Genome.fasta -g ./TriTrypDB-63_TcruziBrazilA4.gff -o Tula_Brazil.gff
+# going with brazil
+```
+
+
+### Orf lengths from liftoff
+```{r}
+liftover_CLbren =read.delim("../liftoff/Tula_clbren.gff", sep='\t', comment='#', col.names = c('contig', 'source', 'feature', 'start', 'end', 'score', 'strand', 'frame', 'attribute'))  %>%  filter(feature=="gene") %>% 
+  mutate(length = end-start) %>% mutate(strain = "liftover_CLbren")
+liftover_Brazil = read.delim("../liftoff/Tula_Brazil.gff", sep='\t', comment='#', col.names = c('contig', 'source', 'feature', 'start', 'end', 'score', 'strand', 'frame', 'attribute'))  %>%  filter(feature=="gene") %>% 
+  mutate(length = end-start) %>% mutate(strain = "liftover_brazil")
+
+liftover_both =  read.delim("../liftoff/gffcmp.combined.gtf", sep='\t', comment='#', col.names = c('contig', 'source', 'feature', 'start', 'end', 'score', 'strand', 'frame', 'attribute'))  %>%  filter(feature=="transcript") %>% 
+  mutate(length = end-start) %>% mutate(strain = "liftover_both")
+
+  
+rbind (#CDS, 
+       #liftover_CLbren %>% select(length, strain),
+       liftover_Brazil %>% select(length, strain),
+       #liftover_both %>% select(length, strain)
+       cds1, cds2
+       ) %>% 
+  #filter(source == "Canu") %>% 
+  ggplot(aes(x=length , fill = strain)) +
+  scale_fill_brewer(palette = "Set1") +
+  geom_histogram(position = "identity", alpha = .3,  color = "black") +scale_x_log10() +
+  ggtitle("Predicted CDS lengths of whole genomes")
+```
+
+
+## combine Augustus and Liftoff
+NOTE:
+For some reason the augsutus gff came out malformed. need to edit the transcript ID or else it doesnt get added. Doing that here by just changing transcript to mRNA. Is that ok?? 
+```{r}
+augustus  %>% filter(feature =="transcript")%>% mutate(feature = "mRNA") %>%
+  mutate(attribute = paste0("ID=",attribute)) %>% 
+  write_tsv("../call_orfs/augustus_transcript.gff", col_names =F )
+```
+
+gonna need to combine the gff seperately i think because the output file for gff compare is weird but we'll burn that bridge when we get to it
+```{bash eval=FALSE, include=T}
+
+../../software/gffread/gffread --merge ../liftoff/Tula_Brazil.gff ./augustus_transcript.gff > liftoff_augustus_merge.gff
+
+```
+## final orf len
+```{r}
+cds_merge =  read.delim("../call_orfs/liftoff_augustus_merge.gff", sep='\t', comment='#', col.names = c('contig', 'source', 'feature', 'start', 'end', 'score', 'strand', 'frame', 'attribute')) 
+
+table(cds_merge$source)
+table(cds_merge$feature)
+table(cds_merge$feature, cds_merge$source)
+
+#table(augustus$feature)
+
+rbind(cds_merge %>%
+        filter(feature=="mRNA") %>%   
+        mutate(length = end-start) %>% 
+        mutate(strain = "Tulahuen") %>% 
+        select(length, strain) , 
+      cds1,
+      cds2,
+      cds3
+      ) %>% 
+  ggplot(aes(x=length , fill = strain)) +
+  scale_fill_brewer(direction = -1,palette = "Set2") +
+  geom_histogram(position = "identity", alpha = 1,  color = "black") +scale_x_log10() +
+  ggtitle("Predicted CDS lengths of whole genomes")+
+  facet_wrap(~strain, nrow =4, scales  = "free_y")+
+  theme(legend.position = "none")
+
+```
+
+### parse the output into something with liftoff annotations
+```{r}
+liftoff = read.delim("../liftoff/Tula_Brazil.gff", sep='\t', comment='#', col.names = c('contig', 'source', 'feature', 'start', 'end', 'score', 'strand', 'frame', 'attribute'))  
+
+cds_merge_description = cds_merge %>% 
+  filter(feature == "mRNA") %>% 
+  mutate(gene_ID = str_extract(attribute, "(?<=ID=).*(?=;gene)"))  %>%
+  left_join(liftoff %>%  
+              filter(feature == "mRNA") %>%
+              mutate(gene_ID = str_extract(attribute, "(?<=ID=).*(?=;Parent)")) %>% 
+              mutate(description = str_extract(attribute, "(?<=description=).*(?=;gene_ebi_biotype)")) %>% 
+              select(-feature, -attribute, -frame) 
+  ) 
+cds_merge_description %>% 
+  mutate(length = end-start) 
+
+
+cds_merge_description %>% mutate(attribute = paste0(attribute, ";description=", description)) %>% select(-gene_ID, -description) %>% write_tsv("../call_orfs/liftoff_augustus_merge_clean.gff",col_names = F)
+
+## find fastas for coding regions
+## bash
+#### bedtools getfasta -fi ../assembly/nd_v1_polish/genome.nextpolish.fa -bed liftoff_augustus_merge_clean.gff > cds.fasta
+```
+
+
+# Orthology annotation
+Using just the GFF produced by agustus, run through eggNOG mapper
+But! It's too messy and doenst pick up transialidases at all, so dump it.
+```{r}
+read_tsv("../call_orfs/MM_aonn93nb.emapper.annotations.tsv", skip = 4)
+```
+
+
+
+# Find Telomeric repeats
+```{bash eval=F, include=T}
+# Make the canu_chrom.fasta into a fasta with one seq on each line so grep works
+awk '/^>/ {printf("\n%s\n",$0);next; } { printf("%s",$0);}  END {printf("\n");}' < canu_chrom.fasta > canu_chrom_1line.fasta
+
+# use seqkit locate. Search for when the telomereic repeat repeats 20 times as a way to pull down telomeres
+ cat canu_chrom_1line.fasta | seqkit locate -p TTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGG > telo_20rep.csv
+
+```
+## ND version 1
+### Has 20 repeats
+```{r}
+telo_contigs = read_tsv("../assembly/nd_v1_polish/telo/telo_20rep.csv") %>% select(-patternName)
+
+# Length of the contigs that contain telemoric repeats
+nd_chrom_lengths %>% 
+  rownames_to_column(var = "seqID") %>% 
+  mutate(seqID = str_extract(seqID, "^.{9}")) %>% 
+  filter(seqID %in%telo_contigs$seqID ) %>% 
+  ggplot()+geom_histogram(aes(x = length)) +scale_x_log10()
+
+nd_chrom_lengths %>% 
+  rownames_to_column(var = "seqID") %>% 
+  mutate(seqID = str_extract(seqID, "^.{9}")) %>% 
+  filter(seqID %in%telo_contigs$seqID ) %>% 
+  ggplot()+
+  geom_col(aes(y = length, x = fct_rev(fct_reorder(seqID, length))))+
+  #theme(axis.text.x = element_blank())+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  scale_y_log10()
+
+telo_contigs %>% 
+  select(seqID, strand) %>% unique()
+
+```
+### Has 3 repeats
+```{r}
+telo_contigs = read_tsv("../assembly/nextdenovo/telo/telo_3rep.csv") %>% select(-patternName)
+# Length of the contigs that contain telemoric repeats
+nd_chrom_lengths %>% 
+  rownames_to_column(var = "seqID") %>% 
+  mutate(seqID = str_extract(seqID, "^.{9}")) %>% 
+  filter(seqID %in%telo_contigs$seqID ) %>% 
+  ggplot()+geom_histogram(aes(x = length)) +scale_x_log10()
+
+nd_chrom_lengths %>% 
+  rownames_to_column(var = "seqID") %>% 
+  mutate(seqID = str_extract(seqID, "^.{9}")) %>% 
+  filter(seqID %in%telo_contigs$seqID ) %>% 
+  ggplot()+
+  geom_col(aes(y = length, x = fct_rev(fct_reorder(seqID, length))))+
+  #theme(axis.text.x = element_blank())+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  scale_y_log10()
+
+telo_contigs %>% 
+  select(seqID, strand) %>% unique()
+```
+
+So 12 contigs with telomeres, one of them has telomeres on both ends. That's neat, but actually less than What i got for canu, which was around 39 of them (though many more overall contigs, bummer). The subtelomeres maybe are removed in the correction step for the new asembler, which i can look for, and in theory try and mess with some correction settings to imrpove it.
+
+
+### Sanity check for RC of telorepeat
+```{r eval=FALSE, include=FALSE}
+telo_contigs_rc = read_tsv("../assembly/nextdenovo/telo/telo_3rep_rc.tsv") %>% select(-patternName)
+# Length of the contigs that contain telemoric repeats
+canu_chrom_lengths %>% 
+  rownames_to_column(var = "seqID") %>% 
+  filter(seqID %in%telo_contigs$seqID ) %>% 
+  ggplot()+geom_histogram(aes(x = length)) +scale_x_log10()
+
+library(forcats)
+canu_chrom_lengths %>% 
+  rownames_to_column(var = "seqID") %>% 
+  filter(seqID %in%telo_contigs_rc$seqID ) %>% 
+  ggplot()+
+  geom_col(aes(y = length, x = fct_rev(fct_reorder(seqID, length))))+
+  #theme(axis.text.x = element_blank())+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=.5)) +
+  scale_y_log10()
+
+telo_contigs_rc %>% 
+  select(seqID, strand) %>% unique()
+```
+
+Ok looks fine, the same number were recovered when i did the seqkit grep for therc of that teloereioc repeat
+
+
