@@ -1,0 +1,506 @@
+---
+title: "Multigene family scan"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+date: "2023-02-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2); theme_set(theme_bw()); theme_update(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+Parse_blast_wite_bed <- function(input_filename, output_filename) {
+  dat = read_tsv(input_filename, col_names = F, show_col_types = FALSE) %>% 
+  select(X1, X7, X8, X11, X3) %>% 
+  rename(contig = X1, start =X7,  end = X8,  eval = X11, pident = X3) %>% 
+  mutate(length = abs(end-start) ) %>% 
+  unique() %>% 
+  filter(length >150) %>% 
+  #filter(contig == "tig00000727")  %>% this was just for checking
+  group_by(contig, start) %>% 
+  arrange(-length) %>% 
+  filter(row_number()==1) %>% ungroup() %>% 
+  group_by(contig, end) %>% 
+  filter(row_number()==1) %>% ungroup() %>% 
+  mutate(strand = ifelse(start - end >0 ,"-", "+"))
+  
+  dat %>% 
+  mutate(new_start = ifelse(strand == "+", start, end) ) %>% 
+  mutate(new_end = ifelse(strand =="+", end, start )) %>% 
+  select(contig, new_start, new_end, eval, length , strand) %>% 
+  arrange(contig, new_start) %>% 
+  write_delim(output_filename, col_names = F, delim = "\t")
+}
+
+```
+#run blast
+Against known TSes annotated in the CL brenner genome
+```{bash}
+blastn -query ../../assembly/nd_v1_polish/genome.nextpolish.fa -subject ./known_gene_families/TranSialidase.fasta -outfmt 6 -out ./blast_wg/TS_Tula_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../assembly/nd_v1_polish/genome.nextpolish.fa -subject ./known_gene_families/mucin.fasta -outfmt 6 -out ./blast_wg/mucin_Tula_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../assembly/nd_v1_polish/genome.nextpolish.fa -subject ./known_gene_families/MASP.fasta -outfmt 6 -out ./blast_wg/MASP_Tula_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../assembly/nd_v1_polish/genome.nextpolish.fa -subject ./known_gene_families/RHS.fasta -outfmt 6 -out ./blast_wg/RHS_Tula_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../assembly/nd_v1_polish/genome.nextpolish.fa -subject ./known_gene_families/DGF1.fasta -outfmt 6 -out ./blast_wg/DGF1_Tula_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../assembly/nd_v1_polish/genome.nextpolish.fa -subject ./known_gene_families/GP63.fasta -outfmt 6 -out ./blast_wg/GP63_Tula_blast.out -max_hsps 100 -perc_identity 85
+
+
+# now against just thecoding revbion
+blastn -query ../../call_orfs/cds.fasta -subject ./known_gene_families/TranSialidase.fasta -outfmt 6 -out ./blast_cds/TS_Tula_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../call_orfs/cds.fasta -subject ./known_gene_families/mucin.fasta -outfmt 6 -out ./blast_cds/mucin_Tula_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../call_orfs/cds.fasta -subject ./known_gene_families/MASP.fasta -outfmt 6 -out ./blast_cds/MASP_Tula_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../call_orfs/cds.fasta -subject ./known_gene_families/RHS.fasta -outfmt 6 -out ./blast_cds/RHS_Tula_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../call_orfs/cds.fasta -subject ./known_gene_families/DGF1.fasta -outfmt 6 -out ./blast_cds/DGF1_Tula_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../call_orfs/cds.fasta -subject ./known_gene_families/GP63.fasta -outfmt 6 -out ./blast_cds/GP63_Tula_blast.out -max_hsps 100 -perc_identity 85
+```
+
+
+
+# Parse blast output and output to bed
+```{r eval=FALSE, include=FALSE}
+## CDS
+filelist = list.files(path="../call_orfs/call_surface_genes/blast_cds/", pattern="*blast.out", all.files=TRUE,
+    full.names=TRUE)
+for (file in filelist) {
+  #small filename
+  
+  fn = str_split(file, "/")
+  fn = fn[[c(1,6)]]
+  fn_2 = str_split(fn, "_")
+  #extra5ct surf prot
+  surf_prot_name  = fn_2[[c(1,1)]]
+  #extract strain
+  strain_name= fn_2[[c(1,2)]]
+  #Create df
+  Parse_blast_wite_bed(file, paste0("../call_orfs/call_surface_genes/blast_cds/",surf_prot_name, "_",strain_name,"_","intermediate.bed") )
+}
+
+## WGS
+filelist = list.files(path="../call_orfs/call_surface_genes/blast_wg/", pattern="*blast.out", all.files=TRUE,
+    full.names=TRUE)
+for (file in filelist) {
+  #small filename
+  
+  fn = str_split(file, "/")
+  fn = fn[[c(1,6)]]
+  fn_2 = str_split(fn, "_")
+  #extra5ct surf prot
+  surf_prot_name  = fn_2[[c(1,1)]]
+  #extract strain
+  strain_name= fn_2[[c(1,2)]]
+  #Create df
+  Parse_blast_wite_bed(file, paste0("../call_orfs/call_surface_genes/blast_wg/",surf_prot_name, "_",strain_name,"_","intermediate.bed") )
+}
+```
+
+## Bedtools merge
+Must overlap by at least 100!
+```{bash eval=FALSE, include=T}
+bedtools merge -s -c 6 -o distinct -d 100  -i TS_Tula_intermediate.bed > TS_tula_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  mucin_Tula_intermediate.bed > mucin_tula_merge.bed  \
+bedtools merge -s -c 6 -o distinct -d 100 -i  MASP_Tula_intermediate.bed > MASP_tula_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  RHS_Tula_intermediate.bed > RHS_tula_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  DGF1_Tula_intermediate.bed > DGF1_tula_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  GP63_Tula_intermediate.bed > GP63_tula_merge.bed 
+
+```
+
+## read in data
+Let's look at how many of each gene we got we got
+```{r}
+# whole genome
+############THIS IS DIFFERENT THAN CDS. 
+filelist = list.files(path="../call_orfs/call_surface_genes/blast_wg/", pattern="*merge.bed", all.files=TRUE,
+    full.names=TRUE)
+surf_beds = data.frame("contig" = character(),
+                       "start" = numeric(),
+                       "end" = numeric(),
+                       "strand" = character(), 
+                       "gene_name" = character(),
+                       "strain" = character())
+for (file in filelist) {
+  #small filename
+  
+  fn = str_split(file, "/")
+  fn = fn[[c(1,6)]]
+  fn_2 = str_split(fn, "_")
+  #extra5ct surf prot
+  surf_prot_name  = fn_2[[c(1,1)]]
+  #extract strain
+  strain_name= fn_2[[c(1,2)]]
+  #Create df
+  dat = read_delim(file, col_names = F, show_col_types = FALSE) %>% 
+    mutate(gene_name = surf_prot_name ) %>% 
+    mutate(strain = strain_name) %>% 
+    rename( contig = X1, start = X2, end = X3,strand = X4)
+  
+  #Add to df
+  surf_beds %>% add_row(dat) -> surf_beds
+}
+
+
+surf_beds %>%
+  group_by(contig, start,end) %>% unique() %>% 
+  mutate(rep = rep(1:n())) %>% 
+  mutate(group_sum = sum(rep)) %>% 
+  filter(group_sum==1)
+  write_tsv("../call_orfs/call_surface_genes/MGF_wg.tsv")
+surf_beds %>% 
+  group_by(contig, start,end) %>% unique() %>% 
+  mutate(rep = rep(1:n())) %>% 
+  mutate(group_sum = sum(rep)) %>% 
+  filter(group_sum==1)
+  write_tsv("../call_orfs/call_surface_genes/MGF_wg.bed", col_names = F)
+##########################################
+# CDS
+############################################
+## Bc the start of the cds in the blast result is within the cds region, we gotta get the start and stop to be within context of the rest of the genome
+filelist = list.files(path="../call_orfs/call_surface_genes/blast_cds/", pattern="*merge.bed", all.files=TRUE,
+    full.names=TRUE)
+surf_beds = data.frame("contig" = character(),
+                       "start" = numeric(),
+                       "end" = numeric(),
+                       "strand" = character(), 
+                       "gene_name" = character(),
+                       "strain" = character())
+for (file in filelist) {
+  #small filename
+  
+  fn = str_split(file, "/")
+  fn = fn[[c(1,6)]]
+  fn_2 = str_split(fn, "_")
+  #extra5ct surf prot
+  surf_prot_name  = fn_2[[c(1,1)]]
+  #extract strain
+  strain_name= fn_2[[c(1,2)]]
+  #Create df
+  dat = read_delim(file, col_names = F, show_col_types = FALSE) %>% 
+    mutate(gene_name = surf_prot_name ) %>% 
+    mutate(strain = strain_name) %>% 
+    rename( contig = X1, start = X2, end = X3,strand = X4)
+  
+  #Add to df
+  surf_beds %>% add_row(dat) -> surf_beds
+}
+test = Biostrings::readDNAStringSet("../call_orfs/cds.fasta") %>% 
+  as.data.frame() %>% rownames_to_column(var = "name") %>% select(name) %>% 
+  mutate(contig = str_extract(name , "^.{9}")) %>% 
+  mutate(start = str_extract(name , "(?<=:)[:digit:]*?(?=-)") ) %>% 
+  mutate(end = str_extract(name, "(?<=-)[:digit:]*" )) %>% 
+  mutate(strand = str_extract(name, "(?<=\\()[:punct:]*?(?=\\))")) %>% mutate(strand = ifelse(is.na(strand), "+", "-"))
+ 
+#merge and replace.
+dat = left_join(surf_beds %>%
+                  rename(name = contig) %>% 
+                  select(-start, -end, -strand) ,
+                test) %>%
+  select(contig, start, end, strand, gene_name) %>% 
+  group_by(contig, start,end) %>% unique() %>% 
+  mutate(rep = rep(1:n())) %>% 
+  mutate(group_sum = sum(rep)) %>% 
+  filter(group_sum==1)
+
+dat %>% write_tsv("../call_orfs/call_surface_genes/MGF_cds.tsv")
+dat %>% select(contig, start, end, gene_name) %>% write_tsv("../call_orfs/call_surface_genes/MGF_cds.bed", col_names = F)
+
+```
+# Graphs 
+
+```{r}
+mfg_wgs = read_tsv("../call_orfs/call_surface_genes/MGF_wg.tsv", show_col_types = FALSE)
+mfg_cds = read_tsv("../call_orfs/call_surface_genes/MGF_cds.tsv", show_col_types = FALSE)
+```
+
+
+Make graphs - CDS
+```{r}
+
+# Size of all surface proteins 
+table(mfg_cds$gene_name) %>%
+  as.data.frame() %>% 
+  rename("gene" = Var1) %>% 
+  ggplot(aes(x = gene, y= Freq, fill = gene))+
+  geom_bar( position = "dodge", stat= "identity", color = "black")+
+  ggtitle("Number of each gene family")
+
+# length for all surface proteins
+mfg_cds %>% 
+  mutate(length = abs(start - end)) %>% 
+  ggplot(aes(x =length)) +
+  geom_histogram()+
+  facet_wrap(~gene_name, scales = "free") +ggtitle("removing double hits")
+
+#genome percent
+mfg_cds %>% 
+  mutate(length = abs(start - end)) %>% 
+  rename(gene = gene_name) %>% 
+  group_by( gene) %>% 
+  summarise(length_sum = sum(length))  %>% 
+  mutate(percent_genome = (length_sum/48462332 )*100 ) %>% 
+  ggplot(aes(x = forcats::fct_rev(fct_reorder(gene, percent_genome)), y= percent_genome, fill = gene))+
+  geom_bar( position = "dodge", stat= "identity", color = "black")+
+  geom_text(aes(label=signif(percent_genome, digits = 4)), vjust=-.7) +
+  ggtitle("Percent of each gene family")
+
+
+```
+Make graphs - wgs
+```{r}
+table = table(mfg_wgs$strain, mfg_wgs$gene_name) %>% as.data.frame() %>% 
+  rename("strain" = Var1, "gene" = Var2)
+# Size of all surface proteins 
+table %>% 
+  filter(strain !="Tula") %>% 
+  ggplot(aes(x = gene, y= Freq, fill = strain))+
+  geom_bar( position = "dodge", stat= "identity", color = "black")+
+  ggtitle("Number of each gene family found in each strain")
+
+table %>% 
+  filter(strain !="Tula") %>% 
+  ggplot(aes(x = strain, y= Freq, fill = gene))+
+  geom_bar( position = "dodge", stat= "identity", color = "black")+
+  ggtitle("Number of each gene family found in each strain")
+
+# Percent of genome for all surface proteins
+
+## Make a table of strain genome sizes
+strain_genome_size = data.frame(strain = c("Bug", "CLEsm", "Dm","Sylv", "tula", "Y"),
+                                size = c(56077138, 33071242, 54160060, 42072610, 48462332, 39698620 ))
+
+mfg_wgs %>% 
+  filter(strain !="Tula") %>% 
+  mutate(length = abs(start - end)) %>% 
+  left_join(strain_genome_size, by = "strain") %>% 
+  rename(gene = gene_name) %>% 
+  left_join(table, by = c("gene", "strain")) %>% 
+  group_by(size, strain, gene, Freq) %>% 
+  summarise(length_sum = sum(length))  %>% 
+  mutate(percent_genome = (length_sum/size )*100 )  %>% 
+  ggplot(aes(x = gene, y= percent_genome, fill = strain))+
+  geom_bar( position = "dodge", stat= "identity", color = "black")+
+  ggtitle("percent of genome each gene family makes up")
+  
+mfg_wgs %>%   
+  filter(strain !="Tula") %>% 
+  mutate(length = abs(start - end)) %>% 
+  left_join(strain_genome_size, by = "strain") %>% 
+  rename(gene = gene_name) %>% 
+  left_join(table, by = c("gene", "strain")) %>% 
+  group_by(size, strain, gene, Freq) %>% 
+  summarise(length_sum = sum(length))  %>% 
+  mutate(percent_genome = (length_sum/size )*100 ) %>% 
+  ggplot(aes(x = strain, y= percent_genome, fill = gene))+
+  geom_bar( position = "dodge", stat= "identity", color = "black")+
+  ggtitle("percent of genome each gene family makes up")
+  
+
+# I would guess the shorter ones are all psudo genes, but also possible that the longer ones could also be garbage. how to test this?
+# Another thing I can do eventually, is either run hmmer or a blastp on the predicted proteins and decide if that's an easy way to detect psudogenes or not. idk!!!!
+# Or looking at the CDSes from Augustus and see how many of them are In CDSes
+
+#much fewer mucins which is interesting, same as previously published work. but also less psuedogenes?
+
+mfg_wgs %>% 
+  filter(strain == "tula") %>% 
+  mutate(length = abs(start - end)) %>% 
+  ggplot(aes(x =length)) +
+  geom_histogram()+
+  facet_wrap(~gene_name, scales = "free")
+
+## table
+
+mfg_wgs %>% 
+  #filter(strain !="tula") %>% 
+  mutate(length = abs(start - end)) %>% 
+  left_join(strain_genome_size, by = "strain") %>% 
+  rename(gene = gene_name) %>% 
+  left_join(table, by = c("gene", "strain")) %>% 
+  group_by(size, strain, gene, Freq) %>% 
+  summarise(length_sum = sum(length))  %>% 
+  mutate(percent_genome = (length_sum/size )*100 )  #%>%   filter(strain == "tula") %>% ungroup() %>% summarise(sum = sum(length_sum))
+
+```
+
+
+# How many of these are peusodo genes?
+## bedtools interect
+Use the intersect of the coding genes come from augusuts and these
+```{r}
+# Make a bed file with all surface proteins 
+
+# Coding genes
+#bedtools intersect -wa -wb -a ./all_surf.bed -b ../augustus/augustus.bed > surface_coding.bed
+# Psuedo genes (-v)
+#bedtools intersect -wa -wb -a ./intermediate_files/all.bed -b ../augustus/augustus.bed -v > surface_psuedo.bed
+```
+
+## proportion of each
+```{r}
+surf_coding = read_tsv("../call_orfs/call_surface_genes/surface_coding.bed", col_names = F) %>% 
+  filter(X13 == "gene") %>% 
+  rename(contig = X1, surf_start = X2, surf_end = X3, surf_strand = X4, gene = X5, orf_start = X7, orf_end =X8, orf_strand = X9, orf_name = X15 ) %>% 
+ select(contig,surf_start, surf_end, surf_strand,gene,orf_start,orf_end,orf_strand, orf_name) %>% 
+  mutate(type = "coding")
+
+surf_psuedo = read_tsv("../call_orfs/call_surface_genes/surface_psuedo.bed", col_names = F)%>% 
+  rename(contig = X1, surf_start = X2, surf_end = X3, surf_strand = X4, gene = X5 )%>% 
+ select(contig,surf_start,surf_end,surf_strand,gene) %>% 
+  mutate(type = "psuedo")
+
+bind_rows(surf_coding, surf_psuedo) %>% unique() %>% 
+  mutate(length =surf_end- surf_start ) %>% 
+  ggplot(aes(x= length))+
+  geom_histogram(aes(fill = type), color = "black")+
+  facet_wrap(~gene, scales = "free")
+```
+
+
+# Find surface genes in ORFs only
+## Look only in CDS:
+```{bash eval=FALSE, include=T}
+blastn -subject ./agustsus whatever -query known_gene_family/TranSialidase.fasta -outfmt 6 -out TS_blast.out evalue 1e-5
+```
+
+
+
+
+# Trying something
+```{r}
+
+table(mfg_cds$contig)
+         
+chrom_lengths = Biostrings::readDNAStringSet("../assembly/nd_v1_polish/genome.nextpolish.fa")  %>%
+  as.data.frame() %>% 
+  mutate(length = nchar(x)) %>% 
+  select(length)
+mfg_cds %>% 
+  filter(contig == "ctg000000") %>% 
+  ggplot()+
+  geom_histogram(aes(x=start, fill = gene_name),binwidth = 1e4, color = "black")
+
+
+mfg_cds %>% 
+  ggplot()+
+  geom_histogram(aes(x=start, fill = gene_name),binwidth = 1e4)+
+  facet_wrap(~contig, scale ="free_x") #+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) 
+  
+
+# Filter
+nd_chrom_lengths = Biostrings::readDNAStringSet("../assembly/nd_v1_polish/genome.nextpolish.fa")  %>%
+  as.data.frame() %>% 
+  mutate(length = nchar(x)) %>% 
+  select(length) %>% 
+  mutate(source = "nd_chrom")
+# filter to top 10 largest
+top_ten = c("ctg000630", "ctg000730", "ctg000490", "ctg000230", "ctg000620","ctg000700", "ctg000100","ctg000670","ctg000660", "ctg000210")
+# ones with telomeres
+telomeres = c("ctg000030", "ctg000090", "ctg000100", "ctg000130", "ctg000370", "ctg000470", "ctg000520", "ctg000540", "ctg000650", "ctg000150", "ctg000210", "ctg000240")
+
+png(file = "./figs/MGF_histogram.png", height = 8, width = 12, units = "in", res = 300)
+mfg_cds %>% 
+  filter(contig %in% top_ten) %>% 
+  ggplot()+
+  geom_histogram(aes(x=start, fill = gene_name),binwidth = 1e4, alpha = .7)+
+  facet_wrap(~contig, scale ="free_x", ncol  = 2)+
+  scale_fill_brewer(palette = "Set1")+
+  theme(legend.position = "bottom")+
+  xlab("Length of contig") 
+dev.off()
+
+mfg_cds %>% 
+  filter(contig %in% telomeres) %>% 
+  ggplot()+
+  geom_histogram(aes(x=start, fill = gene_name),binwidth = 1e4)+
+  facet_wrap(~contig, scale ="free_x")+
+  scale_fill_brewer(palette = "Set2")
+```
+
+
+
+
+```{r}
+TE = read_tsv("../TE/EDTA_tula/genome.nextpolish.fa.mod.EDTA.TEanno.gff3",skip = 6, col_names = F, show_col_types = FALSE ) %>% 
+  rename(contig = X1, source = X2, seq_ontology = X3, start = X4, end = X5, score = X6, strand = X7, phase = X8, attributes = X9) %>% 
+  mutate(name = str_extract(attributes  ,"(?<=Name=).*")) %>%
+  mutate(name = str_extract(name , ".*(?=;Class)")) %>%
+  mutate(classification = str_extract(attributes  ,"(?<=Classification=)[:alpha:]*")) %>%
+  mutate(ltr_identity = str_extract(attributes, "(?<=ltr_identity=0.)[:digit:]*")) %>% 
+  mutate(identity =  str_extract(attributes, "(?<=Identity=0.)[:digit:]*")) %>% 
+  mutate(identity = ifelse(str_detect(attributes, "(?<=Identity=1)[:digit:]*"), 1, 
+                              paste0("0.", identity))) %>%
+  mutate(ltr_identity = ifelse(str_detect(attributes, "(?<=ltr_identity=1)[:digit:]*"), 1, 
+                           paste0("0.", ltr_identity))) %>% 
+  mutate(identity = as.numeric(ifelse(identity == "0.NA", NA, identity))) %>%
+  mutate(ltr_identity = as.numeric(ifelse(ltr_identity == "0.NA", NA, ltr_identity)) )%>% 
+  mutate(element_len = abs(start -end )) 
+
+
+```
+#Figure 2A
+```{r}
+color = c(
+  "Unknown" = "#8dcab2ff",
+  "LTR" = "#b57188ff",
+  "LINE" = "#00b6ebff",
+  "DIRS" = "#ff8466ff",
+  "DNA"= "#a58affff",
+  "DGF1" = "#ee7575ff", 
+  "GP63" ="#85b1d4ff"  ,
+  "MASP" = "#93ce92ff"  ,
+  "mucin" = "#c093c6ff",
+  "RHS" = "#ffb166ff",
+  "TS" = "#ffff84ff" )
+
+
+hist_plot <- function(contig_select) {
+  TE %>% 
+  filter(contig %in% contig_select) %>% 
+  full_join(mfg_cds %>% 
+              filter(contig %in% contig_select), by = c("start", "contig", "strand", "end") ) %>%
+  select(start, contig, strand, end, classification, gene_name ) %>%
+  pivot_longer(cols = c("classification","gene_name" ), names_to = "feature",values_to = "test" ) %>%
+  mutate(feature = ifelse(feature == "gene_name", "MGF", "TE" )) %>% 
+  na.omit() %>% 
+  ggplot()+
+  geom_histogram(aes(x=start, fill = test),binwidth = 1e4, position = "identity")+
+  facet_grid(feature~contig, scale ="free")+
+  scale_fill_manual(values = color)+
+  theme(legend.position = "none")+
+  xlab("") +ylab("")+
+  scale_x_continuous(labels = label_comma())
+  }
+
+top_ten
+
+p1= hist_plot("ctg000630")
+p2= hist_plot("ctg000730")
+p3= hist_plot("ctg000490")
+p4= hist_plot("ctg000230")
+p5= hist_plot("ctg000620")
+p6= hist_plot("ctg000700")
+p7= hist_plot("ctg000100")
+#p8= hist_plot("ctg000670")
+p9= hist_plot("ctg000660")
+#p10= hist_plot("ctg000210")
+#p11=hist_plot("ctg000290")
+p12 = hist_plot("ctg000360")
+
+
+pdf(file = "./figs/MGF_TE_histogram.pdf", height = 8, width = 16)
+cowplot::plot_grid(p1,p2,p3,p4,p5,p6,p7,
+                   #p8,
+                   p9,
+                   #p10,p11,
+                   p12)
+dev.off()
+
+pdf(file = "./figs/test.pdf", height = 8, width = 20)
+p1 +theme(legend.position  = "right")
+dev.off()
+```
+
+
+

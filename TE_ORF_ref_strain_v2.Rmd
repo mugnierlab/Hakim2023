@@ -1,0 +1,1273 @@
+---
+title: "TE and MGF other genomes"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+date: "2023-05-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2); theme_set(theme_bw()); theme_update(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+Parse_blast_wite_bed <- function(input_filename, output_filename) {
+    dat = read_tsv(input_filename, col_names = F, show_col_types = FALSE) %>% 
+  select(X1, X7, X8, X11, X3) %>% 
+  rename(contig = X1, start =X7,  end = X8,  eval = X11, pident = X3) %>% 
+  mutate(length = abs(end-start) ) %>% 
+  unique() %>% 
+  filter(length >150) %>% 
+  #filter(contig == "tig00000727")  %>% this was just for checking
+  group_by(contig, start) %>% 
+  arrange(-length) %>% 
+  filter(row_number()==1) %>% ungroup() %>% 
+  group_by(contig, end) %>% 
+  filter(row_number()==1) %>% ungroup() %>% 
+  mutate(strand = ifelse(start - end >0 ,"-", "+"))
+  
+  dat %>% 
+  mutate(new_start = ifelse(strand == "+", start, end) ) %>% 
+  mutate(new_end = ifelse(strand =="+", end, start )) %>% 
+  select(contig, new_start, new_end, eval, length , strand) %>% 
+  arrange(contig, new_start) %>% 
+  write_delim(output_filename, col_names = F, delim = "\t")
+}
+
+```
+#
+# Brazil first
+
+## Find TEs using EDTA
+```{bash eval=FALSE, include=T}
+# Change names to be shorter
+seqkit replace -p "\s.+" ./TriTrypDB-61_TcruziBrazilA4_Genome.fasta >Brazil_genome_clean.fasta
+#Now run EDTA
+ perl ../EDTA/EDTA.pl -genome ../../../reference_genomes/Brazil_genome_clean.fasta --sensitive 1 --anno 1 --evaluate 1 
+```
+### read in data 
+```{r}
+TE = read_tsv("../TE/EDTA_brazil/Brazil_genome_clean.fasta.mod.EDTA.TEanno.gff3",skip = 6, col_names = F, show_col_types = FALSE ) %>% 
+  rename(contig = X1, source = X2, seq_ontology = X3, start = X4, end = X5, score = X6, strand = X7, phase = X8, attributes = X9) %>% 
+  mutate(name = str_extract(attributes  ,"(?<=Name=).*")) %>%
+  mutate(name = str_extract(name , ".*(?=;Class)")) %>%
+  mutate(classification = str_extract(attributes  ,"(?<=Classification=)[:alpha:]*")) %>%
+  mutate(ltr_identity = str_extract(attributes, "(?<=ltr_identity=0.)[:digit:]*")) %>% 
+  mutate(identity =  str_extract(attributes, "(?<=Identity=0.)[:digit:]*")) %>% 
+  mutate(identity = ifelse(str_detect(attributes, "(?<=Identity=1)[:digit:]*"), 1, 
+                              paste0("0.", identity))) %>%
+  mutate(ltr_identity = ifelse(str_detect(attributes, "(?<=ltr_identity=1)[:digit:]*"), 1, 
+                           paste0("0.", ltr_identity))) %>% 
+  mutate(identity = as.numeric(ifelse(identity == "0.NA", NA, identity))) %>%
+  mutate(ltr_identity = as.numeric(ifelse(ltr_identity == "0.NA", NA, ltr_identity)) )%>% 
+  mutate(element_len = abs(start -end )) %>% 
+  mutate(contig = str_replace(contig, "Br_", "TcBrA4_" ))
+```
+
+## Find Multi gene family members
+```{bash eval=FALSE, include=T}
+# search the annotated CDSes for the multigene families 
+blastn -query ../reference_genomes/TriTrypDB-62_TcruziBrazilA4_AnnotatedCDSs.fasta -subject known_gene_family/TranSialidase.fasta -outfmt 6 -out ./blast_cds/TS_brazil_blast.out -max_hsps 100 -perc_identity 85
+
+```
+### Parse blast then write the bed file
+```{r eval=FALSE, include=T}
+## CDS
+filelist = list.files(path="../call_orfs/call_surface_genes/blast_output", pattern="*blast.out", all.files=TRUE,
+    full.names=TRUE)
+for (file in filelist) {
+  #small filename
+  
+  fn = str_split(file, "/")
+  fn = fn[[c(1,5)]]
+  fn_2 = str_split(fn, "_")
+  #extra5ct surf prot
+  surf_prot_name  = fn_2[[c(1,1)]]
+  #extract strain
+  strain_name= fn_2[[c(1,2)]]
+  #Create df
+  Parse_blast_wite_bed(file, paste0("../call_orfs/call_surface_genes/blast_output/",surf_prot_name, "_",strain_name,"_","intermediate.bed") )
+}
+
+## WGS
+filelist = list.files(path="../call_orfs/call_surface_genes/blast_output/blast_wholegenome", pattern="*blast.out", all.files=TRUE,
+    full.names=TRUE)
+for (file in filelist) {
+  #small filename
+  
+  fn = str_split(file, "/")
+  fn = fn[[c(1,6)]]
+  fn_2 = str_split(fn, "_")
+  #extra5ct surf prot
+  surf_prot_name  = fn_2[[c(1,1)]]
+  #extract strain
+  strain_name= fn_2[[c(1,2)]]
+  #Create df
+  Parse_blast_wite_bed(file, paste0("../call_orfs/call_surface_genes/blast_output/blast_wholegenome/",surf_prot_name, "_",strain_name,"_","intermediate.bed") )
+}
+```
+
+### Merge overlapping hits
+
+```{bash eval=FALSE, include=T}
+cd /home/jill/Lab/Tulahuen/call_orfs/call_surface_genes/blast_output
+
+bedtools merge -s -c 6 -o distinct -d 100  -i  TS_brazil_intermediate.bed > TS_brazil_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  mucin_brazil_intermediate.bed > mucin_brazil_merge.bed  \
+bedtools merge -s -c 6 -o distinct -d 100 -i  MASP_brazil_intermediate.bed > MASP_brazil_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  RHS_brazil_intermediate.bed > RHS_brazil_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  DGF1_brazil_intermediate.bed > DGF1_brazil_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  GP63_brazil_intermediate.bed > GP63_brazil_merge.bed 
+
+```
+
+Make one file
+### cds
+```{r eval=FALSE, include=T}
+## CDS
+filelist = list.files(path="../call_orfs/call_surface_genes/Brazil/blast_output", pattern="*merge.bed", all.files=TRUE,
+    full.names=TRUE)
+surf_beds = data.frame("contig" = character(),
+                       "start" = numeric(),
+                       "end" = numeric(),
+                       "strand" = character(), 
+                       "gene_name" = character(),
+                       "strain" = character())
+for (file in filelist) {
+  fn = str_split(file, "/")
+  fn = fn[[c(1,6)]]
+  fn_2 = str_split(fn, "_")
+  #extract surf prot
+  surf_prot_name  = fn_2[[c(1,1)]]
+  #extract strain
+  strain_name= fn_2[[c(1,2)]]
+  #Create df
+  dat = read_delim(file, col_names = F, show_col_types = FALSE) %>% 
+    mutate(gene_name = surf_prot_name ) %>% 
+    mutate(strain = strain_name) %>% 
+    rename( contig = X1, start = X2, end = X3,strand = X4)
+  
+  #Add to df
+  surf_beds %>% add_row(dat) -> surf_beds
+}
+
+#change the contig name 
+# get the gene id thing from the cds fasta uploaded to tritrip
+test = Biostrings::readDNAStringSet("../../reference_genomes/cds/TriTrypDB-61_TcruziBrazilA4_AnnotatedCDSs.fasta") %>% 
+  as.data.frame() %>% rownames_to_column(var = "name") %>% select(name) %>% 
+  mutate(contig = str_extract(name , "^.{17}")) %>% 
+  mutate(chr_num = if_else( str_detect(name, "Chr"),
+                                       str_extract(name, "(?<=Chr)[:digit:]{1,2}"),
+                                       str_extract(name, "(?<=Contig)[:digit:]{1,2}")
+                                       )) %>% 
+  mutate(clean_name = ifelse(str_detect(name, "Chr"),
+         paste0("TcBrA4_Chr", chr_num),
+         paste0("TcBrA4_Contig", chr_num)))%>%
+  mutate(start = str_extract(name , "(?<=:)[:digit:]*?(?=-)") ) %>% 
+  mutate(end = str_extract(name, "(?<=-)[:digit:]*?(?=\\()" )) %>% 
+  mutate(strand = str_extract(name, "(?<=\\()[:punct:]*?(?=\\))")) %>% mutate(strand = ifelse(is.na(strand), "+", "-"))
+ 
+ 
+#merge and replace.
+dat = left_join(surf_beds %>% select(-start, -end, -strand) 
+                , test , by = c("contig" )) %>% select(-contig, -chr_num, -name) %>% 
+  rename(contig = clean_name) %>% 
+  group_by(contig, start,end, gene_name) %>% unique() %>% 
+  mutate(rep = rep(1:n())) %>% 
+  mutate(group_sum = sum(rep)) %>% 
+  filter(group_sum==1)
+
+write.csv(dat, "../call_orfs/call_surface_genes/brazil_MGF_cds.bed", row.names = F)
+```
+### wgs
+
+```{r eval=FALSE, include=T}
+###############################
+## Whole genome
+filelist = list.files(path="../call_orfs/call_surface_genes/Brazil/blast_output/blast_wholegenome/", pattern="*merge.bed", all.files=TRUE,
+    full.names=TRUE)
+surf_beds = data.frame("contig" = character(),"start" = numeric(), "end" = numeric(),"strand" = character(),  "gene_name" = character(),"strain" = character())
+for (file in filelist) {
+  fn = str_split(file, "/")
+  fn = fn[[c(1,6)]]
+  fn_2 = str_split(fn, "_")
+  #extra5ct surf prot
+  surf_prot_name  = fn_2[[c(1,1)]]
+  #extract strain
+  strain_name= fn_2[[c(1,2)]]
+  #Create df
+  dat = read_delim(file, col_names = F, show_col_types = FALSE) %>% 
+    mutate(gene_name = surf_prot_name ) %>% 
+    mutate(strain = strain_name) %>% 
+    rename( contig = X1, start = X2, end = X3,strand = X4)
+  
+  #Add to df
+  surf_beds %>% add_row(dat) -> surf_beds
+}
+
+write.csv(dat %>% 
+            group_by(contig, start,end) %>% unique() %>% 
+            mutate(rep = rep(1:n())) %>% 
+            mutate(group_sum = sum(rep)) %>% 
+            filter(group_sum==1),
+          "../call_orfs/call_surface_genes/brazil_MGF_wg.bed", row.names = F)
+
+```
+
+## Distance from ORF to TE
+
+### Any ORF
+```{r}
+# convert augustus gff to a bed in bash using bedtools like so:
+## convert2bed --input=gff < augustus.gff > augustus.bed
+####
+brazil_orf_bed = read_tsv("../../reference_genomes/brazil.bed", col_names = F) %>% 
+  filter(X8 == "CDS") %>% 
+  select(X1, X2, X3, X6, X10) %>%   unique() %>% 
+  rename(contig = X1, start = X2, end = X3, strand = X6, gene = X10) %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(gene_id = paste0(contig, ":", start,"-",end))
+
+###
+```
+
+Now the loop - for all orf
+This is a very long step, so at the end i saved the CSV so I can just load it in the next chunk
+```{r eval=FALSE, warning=FALSE, include=T}
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+dat2 =  brazil_orf_bed %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+write.csv(closest_TE_orf %>% unique(), "./brazil_clostestTE_orf.csv")
+
+```
+
+
+### Just MGF memeber
+### cds
+```{r eval=FALSE, include=T}
+
+surf_bed = read_csv("../call_orfs/call_surface_genes/brazil_MGF_cds.bed") %>%
+  mutate(source = "surf")
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+dat2 =  surf_bed %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+write.csv(closest_TE_orf %>% unique(), "./brazil_clostestTE_MGF_CDS.csv")
+
+```
+###### 
+### From WGS
+```{r eval=FALSE, include=T}
+
+surf_bed = read_csv("../call_orfs/call_surface_genes/brazil_MGF_wg.bed") %>%
+  mutate(source = "surf")
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+dat2 =  surf_bed %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+write.csv(closest_TE_orf %>% unique(), "./brazil_clostestTE_MGF_WGS.csv")
+
+```
+
+
+### Histogram
+```{r}
+
+## Graph together
+
+closest_TE_orf = read.csv("./brazil_clostestTE_orf.csv") %>% select(-X)
+closest_TE_surf = read.csv("./brazil_clostestTE_MGF_CDS.csv")  %>% select(-X)
+closest_TE_surf_WGS = read.csv("./brazil_clostestTE_MGF_WGS.csv")  %>% select(-X)
+
+surf_bed = read_csv("../call_orfs/call_surface_genes/brazil_MGF_cds.bed") %>%
+  mutate(source = "surf")
+
+
+dat = closest_TE_orf %>% unique() %>%
+  mutate(source=  "ORFs") %>% 
+  bind_rows(closest_TE_surf %>% mutate(source = "MGF")) %>%  #%>%  bind_rows(closest_TE_HSP %>% mutate(source = "HSP"))
+  bind_rows(closest_TE_surf_WGS %>% mutate(source = "MGF_WGS"))
+dat %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance) , fill = source))+
+  facet_wrap(~source, scales = "free_y", nrow = 2)
+
+dat %>% 
+  filter(source != "MGF_WGS") %>% 
+  mutate(source = factor(source, levels = c("ORFs" , "MGF"))) %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance), fill = source ), alpha = .5, position = "identity" , color = "black")
+
+dat %>% 
+  ggplot()+ geom_histogram(aes(x =  (closest_TE_distance), fill = source ), alpha = .5, position = "identity" , color = "black")
+```
+
+
+# Figure Sup 1A
+```{r}
+## By MGF
+p =ggplot()+ 
+  geom_histogram(data = closest_TE_orf, 
+                 aes(x= log10(closest_TE_distance)), alpha = .2, color = "black"
+                     )+
+  geom_histogram(data = 
+                   surf_bed %>% 
+                        mutate(surf_id = paste0(contig, ":",start,"-",end)) %>% 
+                        left_join(closest_TE_surf),
+  aes(x =  log10(closest_TE_distance), fill = gene_name ),
+                 alpha = .6, color = "black")+
+    scale_fill_brewer(palette = "Set1")
+
+p
+pdf(file = "./figs/Brazil_histogram.pdf", height = 5, width = 6)
+p
+dev.off()
+```
+### who is in peak 1
+```{r}
+peak1_CDS = left_join(brazil_orf_bed, closest_TE_orf, by = c("gene_id"= "surf_id", "contig")) %>% 
+  filter(closest_TE_distance<10E3) %>% 
+  mutate(CDS_id = str_extract(gene, "(?<=Parent=).*(?=;gene)")) %>% 
+  select(CDS_id)
+
+test = Biostrings::readDNAStringSet("../../reference_genomes/TriTrypDB-61_TcruziBrazilA4_AnnotatedCDSs.fasta")  %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "name") %>% 
+  select(name) %>% 
+  mutate(CDS_id = str_extract(name, "^.{17}")) %>% 
+  right_join(peak1_CDS) %>% 
+  mutate(product = str_extract(name, "(?<=product=).*(?=location)")) %>% 
+  select(product) %>% 
+  mutate(gene_group = case_when(str_detect(product, "(?<=MUC)") ~ "mucin",
+                              str_detect(product, "(?<=mucin, putative)") ~ "mucin",
+                                str_detect(product, "(?<=trans-sialidase)") ~ "trans-sialidase",
+                                str_detect(product, "(?<=GP63)") ~ "GP63",
+                                str_detect(product, "(?<=MASP)") ~ "MASP",
+                                str_detect(product, "(?<=hypothetical protein)") ~ "hypothetical protein",
+                                str_detect(product, "(?<=RHS)") ~ "RHS",
+                                str_detect(product, "(?<=DGF-1)") ~ "DGF-1",
+                                TRUE ~ "naw" )) %>% 
+  mutate(gene_group  = ifelse(gene_group == "naw", product, gene_group ))
+
+
+test %>% write.csv("./brazil_peak1.csv")
+  
+table(test$gene_group) %>% as.data.frame() 
+  #write.csv("./brazil_peak1_table.csv")
+
+```
+### who is in peak 2
+```{r}
+peak1_CDS = left_join(brazil_orf_bed, closest_TE_orf, by = c("gene_id"= "surf_id", "contig")) %>% 
+  filter(closest_TE_distance>10E3) %>% 
+  mutate(CDS_id = str_extract(gene, "(?<=Parent=).*(?=;gene)")) %>% 
+  select(CDS_id)
+
+test = Biostrings::readDNAStringSet("../../reference_genomes/TriTrypDB-61_TcruziBrazilA4_AnnotatedCDSs.fasta")  %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "name") %>% 
+  select(name) %>% 
+  mutate(CDS_id = str_extract(name, "^.{17}")) %>% 
+  right_join(peak1_CDS) %>% 
+  mutate(product = str_extract(name, "(?<=product=).*(?=location)")) %>% 
+  select(product) %>% 
+  mutate(gene_group = case_when(str_detect(product, "(?<=MUC)") ~ "mucin",
+                              str_detect(product, "(?<=mucin, putative)") ~ "mucin",
+                                str_detect(product, "(?<=trans-sialidase)") ~ "trans-sialidase",
+                                str_detect(product, "(?<=GP63)") ~ "GP63",
+                                str_detect(product, "(?<=MASP)") ~ "MASP",
+                                str_detect(product, "(?<=hypothetical protein)") ~ "hypothetical protein",
+                                str_detect(product, "(?<=RHS)") ~ "RHS",
+                                str_detect(product, "(?<=DGF-1)") ~ "DGF-1",
+                                TRUE ~ "naw" )) %>% 
+  mutate(gene_group  = ifelse(gene_group == "naw", product, gene_group ))
+
+table(test$gene_group) %>% as.data.frame() 
+```
+
+
+# Null ditributions
+it should be the distance between any TE and any random point in the genome, normalized to the number of CDSes. so, basically
+trying 2 ways: 
+1.a completely random start and stop within the length of a contig
+
+```{r warning=F}
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+#Try first with a completely random 
+dat2 =  brazil_orf_bed %>% 
+  mutate(start_random = rnorm(n = nrow(brazil_orf_bed))) %>% 
+  mutate(end_random = rnorm(n = nrow(brazil_orf_bed))) %>% 
+  mutate(surf_id = paste0(contig, ":", start_random,"-",end_random)) %>% 
+  pivot_longer(cols = c("start_random", "end_random"), names_to = "pos_id", values_to = "position_random") #%>% mutate(permuted_pos = sample(x = position))
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf_random = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+closest_TE_orf_random %>% 
+ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance)), alpha = .5, position = "identity" , color = "black") +ggtitle("distance between a random spot on a contig and nearest TE")
+closest_TE_orf_random %>% 
+ggplot()+ geom_histogram(aes(x =  (closest_TE_distance)), alpha = .5, position = "identity" , color = "black")
+```
+
+2. Shuffeling  the start and the end of every ORF ON ANY CONTIG
+
+```{r warning=F}
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+#Try first with a completely random 
+dat2 =  brazil_orf_bed %>% 
+  mutate(start_random =sample(start)) %>% 
+  mutate(end_random = sample(end)) %>% 
+  mutate(surf_id = paste0(contig, ":", start_random,"-",end_random)) %>% 
+  pivot_longer(cols = c("start_random", "end_random"), names_to = "pos_id", values_to = "position_random") 
+
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf_random = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+closest_TE_orf_random %>% 
+ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance)), alpha = .5, position = "identity" , color = "black") +ggtitle("distance between a shufled start and stop and nearest TE")
+closest_TE_orf_random %>% 
+ggplot()+ geom_histogram(aes(x =  (closest_TE_distance)), alpha = .5, position = "identity" , color = "black")
+```
+
+Make ECDFs
+```{r}
+dat = closest_TE_orf %>% 
+  filter(closest_TE_distance != "Inf")
+ecdf(x =dat$closest_TE_distance ) %>% plot(main ="all ORF, TE dist")
+
+dat = closest_TE_surf %>% 
+  filter(closest_TE_distance != "Inf")
+ecdf(x =dat$closest_TE_distance ) %>% plot(main = "just MGF, TE dist")
+
+## Log transformed
+dat = closest_TE_orf %>% 
+  filter(closest_TE_distance != "Inf") %>% filter(closest_TE_distance != 0) %>% 
+  mutate(log_dist = log10(closest_TE_distance)) 
+ecdf(x =dat$log_dist ) %>% plot(main ="all ORF, Log10(TE dist)")
+
+dat = closest_TE_surf %>% 
+  filter(closest_TE_distance != "Inf")%>% filter(closest_TE_distance != 0) %>% 
+  mutate(log_dist = log10(closest_TE_distance)) 
+ecdf(x =dat$log_dist ) %>% plot(main = "just MGF, Log10(TE dist)")
+```
+
+
+
+
+what percent of cds is mgf
+```{r}
+# count how many the say are according to thier annotated GFF
+test = Biostrings::readDNAStringSet("../../reference_genomes/TriTrypDB-61_TcruziBrazilA4_AnnotatedCDSs.fasta") %>% 
+  as.data.frame() %>% rownames_to_column(var = "name") %>% select(name) %>% 
+  mutate(MGF  = case_when(str_detect(name, "MASP") ~ "MASP", 
+                          str_detect(name, "mucin ") ~ "mucin",
+                          str_detect(name, "RHS") ~ "RHS", 
+                          str_detect(name, "DGF-1") ~ "DGF1",
+                          str_detect(name, "trans-sialidase") ~"TS",
+                          TRUE ~ "Not MGF")) %>% 
+  filter(MGF != "Not MGF")
+nrow(test)
+
+#How many I found with the bnlast against the CDS
+read_csv("../call_orfs/call_surface_genes/brazil_all_MGF.bed",  show_col_types = FALSE)  %>% nrow()
+ ## one of the reasons this is more can be 1) some regions seem to hit MASPS, Mucins and TSes, for some reason. Long streches of series seem to be common to all three? So that increases it. For the other graphs I've just uniqued it as a temporary solution, but i might as well figure out what to do about it now. 2) two parts of the same orf are called as MGFs, with a non MGF in the middle, so 1 CDS -> 2 MGFs. This is something I also need to fix, but I should write something to do it systematically.
+# how many i found with the blast against the whole genome
+nrow(read_csv("../call_orfs/call_surface_genes/brazilWholeGenome_all_MGF.bed", show_col_types = FALSE))
+
+#total ORFs
+Biostrings::readDNAStringSet("../../reference_genomes/TriTrypDB-61_TcruziBrazilA4_AnnotatedCDSs.fasta") %>% 
+  as.data.frame() %>% rownames_to_column(var = "name") %>% select(name) %>% nrow
+```
+
+# Berenice
+
+## Find TEs using EDTA
+```{bash eval=FALSE, include=T}
+# Change names to be shorter
+seqkit replace -p "\s.+" ./TriTrypDB-63_TcruziBerenice_Genome.fasta > Berenice_genome_clean.fasta
+# then went in sublime to ctr+h replace all the JABDHM with B 
+#Now run EDTA
+perl ../EDTA/EDTA.pl -genome ../../../reference_genomes/Berenice_genome_clean.fasta --sensitive 1 --anno 1 --evaluate 1 
+```
+
+### read in data
+```{r}
+TE = read_tsv("../TE/EDTA_Bernice/Berenice_genome_clean.fasta.mod.EDTA.TEanno.gff3",skip = 6, col_names = F, show_col_types = FALSE ) %>% 
+  rename(contig = X1, source = X2, seq_ontology = X3, start = X4, end = X5, score = X6, strand = X7, phase = X8, attributes = X9) %>% 
+  mutate(name = str_extract(attributes  ,"(?<=Name=).*")) %>%
+  mutate(name = str_extract(name , ".*(?=;Class)")) %>%
+  mutate(classification = str_extract(attributes  ,"(?<=Classification=)[:alpha:]*")) %>%
+  mutate(ltr_identity = str_extract(attributes, "(?<=ltr_identity=0.)[:digit:]*")) %>% 
+  mutate(identity =  str_extract(attributes, "(?<=Identity=0.)[:digit:]*")) %>% 
+  mutate(identity = ifelse(str_detect(attributes, "(?<=Identity=1)[:digit:]*"), 1, 
+                              paste0("0.", identity))) %>%
+  mutate(ltr_identity = ifelse(str_detect(attributes, "(?<=ltr_identity=1)[:digit:]*"), 1, 
+                           paste0("0.", ltr_identity))) %>% 
+  mutate(identity = as.numeric(ifelse(identity == "0.NA", NA, identity))) %>%
+  mutate(ltr_identity = as.numeric(ifelse(ltr_identity == "0.NA", NA, ltr_identity)) )%>% 
+  mutate(element_len = abs(start -end ))
+
+```
+
+## Find MGF
+```{bash eval=F, include=T}
+blastn -query ../../../../reference_genomes/TriTrypDB-64_TcruziBerenice_AnnotatedCDSs.fasta -subject ../known_gene_families/TranSialidase.fasta -outfmt 6 -out ./blast_cds/TS_berenice_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../../../reference_genomes/TriTrypDB-64_TcruziBerenice_AnnotatedCDSs.fasta -subject ../known_gene_families/MASP.fasta  -outfmt 6 -out ./blast_cds/MASP_berenice_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../../../reference_genomes/TriTrypDB-64_TcruziBerenice_AnnotatedCDSs.fasta -subject ../known_gene_families/mucin.fasta  -outfmt 6 -out ./blast_cds/MASP_mucin_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../../../reference_genomes/TriTrypDB-64_TcruziBerenice_AnnotatedCDSs.fasta -subject ../known_gene_families/DGF1.fasta  -outfmt 6 -out ./blast_cds/DGF1_berenice_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../../../reference_genomes/TriTrypDB-64_TcruziBerenice_AnnotatedCDSs.fasta -subject ../known_gene_families/GP63.fasta  -outfmt 6 -out ./blast_cds/GP63_berenice_blast.out -max_hsps 100 -perc_identity 85
+blastn -query ../../../../reference_genomes/TriTrypDB-64_TcruziBerenice_AnnotatedCDSs.fasta -subject ../known_gene_families/RHS.fasta  -outfmt 6 -out ./blast_cds/RHS_berenice_blast.out -max_hsps 100 -perc_identity 85
+```
+
+### Parse blast then write the bed file
+```{r eval=FALSE, include=T}
+## CDS
+filelist = list.files(path="../call_orfs/call_surface_genes/Berenice/blast_cds", pattern="*blast.out", all.files=TRUE,
+    full.names=TRUE)
+for (file in filelist) {
+  #small filename
+  
+  fn = str_split(file, "/")
+  fn = fn[[c(1,6)]]
+  fn_2 = str_split(fn, "_")
+  #extra5ct surf prot
+  surf_prot_name  = fn_2[[c(1,1)]]
+  #extract strain
+  strain_name= fn_2[[c(1,2)]]
+  #Create df
+  Parse_blast_wite_bed(file, paste0("../call_orfs/call_surface_genes/Berenice/blast_cds/",surf_prot_name, "_",strain_name,"_","intermediate.bed") )
+}
+
+```
+
+### Merge overlapping hits
+
+```{bash eval=FALSE, include=T}
+cd /home/jill/Lab/Tulahuen/call_orfs/call_surface_genes/blast_cds
+
+bedtools merge -s -c 6 -o distinct -d 100  -i  TS_berenice_intermediate.bed > TS_berenice_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  mucin_berenice_intermediate.bed > mucin_berenice_merge.bed  \
+bedtools merge -s -c 6 -o distinct -d 100 -i  MASP_berenice_intermediate.bed > MASP_berenice_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  RHS_berenice_intermediate.bed > RHS_berenice_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  DGF1_berenice_intermediate.bed > DGF1_berenice_merge.bed \
+bedtools merge -s -c 6 -o distinct -d 100 -i  GP63_berenice_intermediate.bed > GP63_berenice_merge.bed 
+
+```
+
+### Make one file
+
+```{r eval=FALSE, include=T}
+## CDS
+filelist = list.files(path="../call_orfs/call_surface_genes/Berenice/blast_cds", pattern="*merge.bed", all.files=TRUE,
+    full.names=TRUE)
+surf_beds = data.frame("contig" = character(),
+                       "start" = numeric(),
+                       "end" = numeric(),
+                       "strand" = character(), 
+                       "gene_name" = character(),
+                       "gene" = character(),
+                       "strain" = character())
+for (file in filelist) {
+  fn = str_split(file, "/")
+  fn = fn[[c(1,6)]]
+  fn_2 = str_split(fn, "_")
+  #extract surf prot
+  surf_prot_name  = fn_2[[c(1,1)]]
+  #extract strain
+  strain_name= fn_2[[c(1,2)]]
+  #Create df
+  dat = read_delim(file, col_names = F, show_col_types = FALSE) %>% 
+    mutate(gene_name = surf_prot_name ) %>% 
+    mutate(strain = strain_name) %>% 
+    rename( contig = X1, start = X2, end = X3,strand = X4)
+  
+  #Add to df
+  surf_beds %>% add_row(dat) -> surf_beds
+}
+
+#change the contig name 
+# get the gene id thing from the cds fasta uploaded to tritrip
+test = Biostrings::readDNAStringSet("../../reference_genomes/cds/TriTrypDB-64_TcruziBerenice_AnnotatedCDSs.fasta") %>% 
+  as.data.frame() %>% rownames_to_column(var = "name") %>% select(name) %>% 
+  mutate(contig_real = str_extract(name , "^.{15}")) %>% 
+  mutate(contig = str_extract(name,"(?<=location=).*(?=:)" )) %>% 
+  mutate(contig = str_replace(contig, "JABDHM", "B" )) %>% 
+  mutate(start = str_extract(name , "(?<=:)[:digit:]*?(?=-)") ) %>% 
+  mutate(end = str_extract(name, "(?<=-)[:digit:]*?(?=\\()" ))
+ 
+ 
+#merge and replace.
+dat = left_join(surf_beds %>% select(-start, -end, -strand) 
+                , test, by = c( "contig" = "contig_real" ))%>% 
+  select(-name) %>% 
+  group_by(contig, start,end) %>% unique() %>% 
+  mutate(rep = rep(1:n())) %>% 
+  mutate(group_sum = sum(rep)) %>% 
+  filter(group_sum==1)
+
+write.csv(dat, "../call_orfs/call_surface_genes/berenice_MGF_cds.bed", row.names = F)
+```
+
+## Distance from TE
+
+
+### Any ORF
+```{r}
+# convert augustus gff to a bed in bash using bedtools like so:
+## convert2bed --input=gff < augustus.gff > augustus.bed
+####
+berenice_orf_bed = read_tsv("../../reference_genomes/berenice_cds.bed", col_names = F) %>% 
+  filter(X8 == "CDS") %>% 
+  select(X1, X2, X3, X6, X10) %>%   unique() %>% 
+  rename(contig = X1, start = X2, end = X3, strand = X6, gene = X10) %>% 
+  mutate(contig = str_replace(contig, "JABDHM", "B" )) %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(gene_id = paste0(contig, ":", start,"-",end))
+
+###
+```
+
+Now the loop - for all orf
+This is a very long step, so at the end i saved the CSV so I can just load it in the next chunk
+```{r eval=FALSE, warning=FALSE, include=T}
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+dat2 =  berenice_orf_bed %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+write.csv(closest_TE_orf %>% unique(), "./berenice_clostestTE_orf.csv")
+
+```
+
+
+### Just MGF memeber
+### cds
+```{r eval=FALSE, include=T}
+
+surf_bed = read_csv("../call_orfs/call_surface_genes/berenice_MGF_cds.bed") %>%
+  mutate(source = "surf")
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+dat2 =  surf_bed %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+write.csv(closest_TE_orf %>% unique(), "./berenice_clostestTE_MGF_CDS.csv")
+
+```
+
+
+## Histogram
+```{r}
+
+## Graph together
+
+closest_TE_orf = read.csv("./berenice_clostestTE_orf.csv") %>% select(-X)
+closest_TE_surf = read.csv("./berenice_clostestTE_MGF_CDS.csv")  %>% select(-X)
+
+surf_bed = read_csv("../call_orfs/call_surface_genes/berenice_MGF_cds.bed") %>%
+  mutate(source = "surf")
+
+dat = closest_TE_orf %>% unique() %>%
+  mutate(source=  "ORFs") %>% 
+  bind_rows(closest_TE_surf %>% mutate(source = "MGF"))
+dat %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance) , fill = source))+
+  facet_wrap(~source, scales = "free_y", nrow = 2)
+
+
+dat %>% 
+  filter(source != "MGF_WGS") %>% 
+  mutate(source = factor(source, levels = c("ORFs" , "MGF"))) %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance), fill = source ), alpha = .5, position = "identity" , color = "black")
+
+dat %>% 
+  ggplot()+ geom_histogram(aes(x =  (closest_TE_distance), fill = source ), alpha = .5, position = "identity" , color = "black")
+```
+
+#Figure Sup 1B
+```{r}
+## By MGF
+p = ggplot()+ 
+  geom_histogram(data = closest_TE_orf, 
+               aes(x= log10(closest_TE_distance)), alpha = .2, color = "black"
+                   )+
+  geom_histogram(data = 
+                   surf_bed %>% 
+                        mutate(surf_id = paste0(contig.y, ":",start,"-",end)) %>% 
+                        left_join(closest_TE_surf, by = "surf_id"),
+  aes(x = log10(closest_TE_distance), fill = gene_name ),
+                 alpha = .6, color = "black")+
+    scale_fill_brewer(palette = "Set1")
+
+p
+pdf(file = "./figs/Berenice_histogram.pdf", height = 5, width = 6)
+p
+dev.off()
+```
+
+# Brucei
+##  EDTA
+```{bash eval=FALSE, include=T}
+seqkit replace -p "\s.+" ./TriTrypDB-64_T >Brucei427_genome_clean.fasta
+perl ../EDTA/EDTA.pl -genome ../../../reference_genomes/Brucei427_genome_clean.fasta --sensitive 1 --anno 1 --evaluate 1 
+
+```
+### read in data
+```{r}
+TE = read_tsv("../TE/EDTA_brucei/Brucei427_genome_clean.fasta.mod.EDTA.TEanno.gff3",skip = 6, col_names = F, show_col_types = FALSE ) %>% 
+  rename(contig = X1, source = X2, seq_ontology = X3, start = X4, end = X5, score = X6, strand = X7, phase = X8, attributes = X9) %>% 
+  mutate(name = str_extract(attributes  ,"(?<=Name=).*")) %>%
+  mutate(name = str_extract(name , ".*(?=;Class)")) %>%
+  mutate(classification = str_extract(attributes  ,"(?<=Classification=)[:alpha:]*")) %>%
+  mutate(ltr_identity = str_extract(attributes, "(?<=ltr_identity=0.)[:digit:]*")) %>% 
+  mutate(identity =  str_extract(attributes, "(?<=Identity=0.)[:digit:]*")) %>% 
+  mutate(identity = ifelse(str_detect(attributes, "(?<=Identity=1)[:digit:]*"), 1, 
+                              paste0("0.", identity))) %>%
+  mutate(ltr_identity = ifelse(str_detect(attributes, "(?<=ltr_identity=1)[:digit:]*"), 1, 
+                           paste0("0.", ltr_identity))) %>% 
+  mutate(identity = as.numeric(ifelse(identity == "0.NA", NA, identity))) %>%
+  mutate(ltr_identity = as.numeric(ifelse(ltr_identity == "0.NA", NA, ltr_identity)) )%>% 
+  mutate(element_len = abs(start -end ))
+
+```
+
+## Find VSGs
+Modified format of Monica's script for finding VSGs . Pulling out only annotated CDS that have both the VSG domain and the C-terminal domain, as complete VSGs
+```{bash eval=FALSE, include=T}
+
+grep "VSG" ../../../reference_genomes/TriTrypDB-64_TbruceiLister427_2018_AnnotatedCDSs.fasta | grep "Trypanosomal VSG domain/Trypanosome variant surface glycoprotein C-terminal domain containing protein" | grep ">" > full_vsg.txt
+
+# only have VSG, no need to have C term
+grep "VSG" ../../../reference_genomes/TriTrypDB-64_TbruceiLister427_2018_AnnotatedCDSs.fasta | grep "Trypanosomal VSG domain containing protein, putative" | grep ">" > vsg_domain.txt
+
+# all of them
+grep -e "Trypanosomal VSG domain containing protein" -e "Trypanosomal VSG domain/Trypanosome variant surface glycoprotein C-terminal domain containing protein, putative" -e "Trypanosome variant surface glycoprotein (A-type)/Trypanosome variant surface glycoprotein C-terminal domain containing protein" -e "Trypanosome variant surface glycoprotein (A-type)" ../../../reference_genomes/TriTrypDB-64_TbruceiLister427_2018_AnnotatedCDSs.fasta | grep ">" > vsg_all.txt
+```
+Read in table:
+note that becasue I dont care about the directionality/stranded ness of the VSG, "start" is currently just the lower number, and end is the higher number, like a bed. it's not actually the start or end of the coding sequnece.
+```{r}
+VSG_complete_427 =read.delim("../call_orfs/call_vsg/full_vsg.txt", sep = "|",col.names= c("1", "2","3","4","5","6","7")) %>% 
+  mutate(length = as.numeric(str_extract(X5, "(?<=length=).*"))) %>% 
+  mutate(location = str_extract(X4, "(?<=location=).*")) %>% 
+  mutate(contig = str_extract(location, ".*(?=:)")) %>% 
+  mutate(start = as.numeric( str_extract(location, "(?<=:)[:digit:]*" ))) %>% 
+  mutate(end = as.numeric(str_extract(location,"(?<=-)[:digit:]*" ))) %>% 
+  mutate(contig = str_extract(contig,  "^.{13}"))
+
+VSG_term_427 =read.delim("../call_orfs/call_vsg/vsg_domain.txt", sep = "|",col.names= c("1", "2","3","4","5","6","7")) %>% 
+  mutate(length = as.numeric(str_extract(X5, "(?<=length=).*"))) %>% 
+  mutate(location = str_extract(X4, "(?<=location=).*")) %>% 
+  mutate(contig = str_extract(location, ".*(?=:)")) %>% 
+  mutate(start = as.numeric( str_extract(location, "(?<=:)[:digit:]*" ))) %>% 
+  mutate(end = as.numeric(str_extract(location,"(?<=-)[:digit:]*" ))) %>% 
+  mutate(contig = str_extract(contig,  "^.{13}"))
+
+VSG_all = read.delim("../call_orfs/call_vsg/vsg_all.txt", sep = "|",col.names= c("1", "2","3","4","5","6","7")) %>% 
+  mutate(length = as.numeric(str_extract(X5, "(?<=length=).*"))) %>% 
+  mutate(location = str_extract(X4, "(?<=location=).*")) %>% 
+  mutate(contig = str_extract(location, ".*(?=:)")) %>% 
+  mutate(start = as.numeric( str_extract(location, "(?<=:)[:digit:]*" ))) %>% 
+  mutate(end = as.numeric(str_extract(location,"(?<=-)[:digit:]*" ))) %>% 
+  mutate(contig = str_extract(contig,  "^.{13}"))
+
+
+VSG_complete_427 %>% 
+  ggplot()+geom_histogram(aes(x=length)) +ggtitle("VSGs with VSG domain and C term domain")
+VSG_term_427 %>% 
+  ggplot()+geom_histogram(aes(x=length)) + ggtitle("VSGs with VSG domain only (ie exlude complete)")
+VSG_all %>% 
+  ggplot()+geom_histogram(aes(x=length)) + ggtitle("all VSG")
+
+table(VSG_all$X3) %>% view
+```
+
+
+## Distance from TE
+
+
+### Any ORF
+```{r}
+# convert augustus gff to a bed in bash using bedtools like so:
+## convert2bed --input=gff < augustus.gff > augustus.bed
+####
+brucei_orf_bed = read_tsv("../../reference_genomes/Tbrucei427.bed", col_names = F) %>% 
+  filter(X8 == "CDS") %>% 
+  select(X1, X2, X3, X6, X10) %>%   unique() %>% 
+  rename(contig = X1, start = X2, end = X3, strand = X6, gene = X10) %>% 
+  mutate(contig = str_extract(contig,  "^.{13}")) %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(gene_id = paste0(contig, ":", start,"-",end)) 
+
+###
+```
+
+Now the loop - for all orf
+This is a very long step, so at the end i saved the CSV so I can just load it in the next chunk
+```{r eval=FALSE, warning=FALSE, include=T}
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+dat2 =  brucei_orf_bed %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+write.csv(closest_TE_orf %>% unique(), "./brucei_clostestTE_orf.csv")
+
+```
+
+
+### Just VSG memeber
+Full length VSG
+```{r eval=FALSE, include=T}
+
+
+dat1 =  TE %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+
+dat2 =  VSG_all %>% 
+  mutate(contig_start = paste0(contig, "_", start)) %>% 
+  mutate(surf_id = paste0(contig, ":", start,"-",end)) %>% 
+  pivot_longer(cols = c("start", "end"), names_to = "pos_id", values_to = "position") 
+ 
+contig_start_df = data.frame(surf_id = character(),
+                             end_pos = numeric(),
+                             start_pos = numeric(),
+                             contig = character(),
+                             closest_TE_dist_start = numeric(),
+                             closest_TE_dist_end = numeric())
+
+TEs = dat1 %>% select(position, contig) 
+
+for (surf_id_i in dat2$surf_id) {
+  #start position and contig 
+  start_pos = str_extract(surf_id_i, "(?<=:)[:digit:]*") %>% as.numeric() 
+  end_pos = str_extract(surf_id_i, "(?<=-)[:digit:]*") %>% as.numeric() 
+  contig_select = str_extract(surf_id_i, ".*(?=:)" )
+  
+  temp = TEs %>% 
+    filter(contig == contig_select)
+
+  closest_TE_dist_start = min(abs(temp$position - start_pos))
+  closest_TE_dist_end = min(abs(temp$position - end_pos))
+  
+  contig_start_df  %>% add_row("surf_id" = surf_id_i,
+                               "end_pos" = end_pos,  
+                               "start_pos" = start_pos,
+                              "closest_TE_dist_start" = closest_TE_dist_start,
+                              "closest_TE_dist_end" = closest_TE_dist_end,
+                              "contig" = contig_select
+                              )-> contig_start_df
+}
+
+closest_TE_orf = contig_start_df %>% 
+  unique() %>% 
+  mutate(start_or_end = case_when(closest_TE_dist_start < closest_TE_dist_end ~"start",
+                               closest_TE_dist_start > closest_TE_dist_end~ "end",
+                               TRUE ~"equal")) %>% 
+  mutate(closest_TE_distance = ifelse(start_or_end == "start", closest_TE_dist_start, closest_TE_dist_end))
+
+write.csv(closest_TE_orf %>% unique(), "./brucei_clostestTE_VSG_CDS.csv")
+
+```
+
+# Figure 2C
+## Histogram
+```{r}
+
+## Graph together
+
+closest_TE_orf = read.csv("./brucei_clostestTE_orf.csv") %>% select(-X)
+closest_TE_surf = read.csv("./brucei_clostestTE_VSG_CDS.csv")  %>% select(-X)
+
+
+dat = closest_TE_orf %>% unique() %>%
+  mutate(source=  "ORFs") %>% 
+  bind_rows(closest_TE_surf %>% mutate(source = "VSG"))
+dat %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance) , fill = source))+
+  facet_wrap(~source, scales = "free_y", nrow = 2)
+
+dat %>% 
+  mutate(source = factor(source, levels = c("ORFs" , "VSG"))) %>% 
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance), fill = source ), alpha = .5, position = "identity" , color = "black")
+
+dat %>% 
+  ggplot()+ geom_histogram(aes(x =  (closest_TE_distance), fill = source ), alpha = .5, position = "identity" , color = "black")
+
+closest_TE_orf %>%  
+  ggplot()+ geom_histogram(aes(x =  log10(closest_TE_distance)), alpha = .5, position = "identity" , color = "black")
+```
+### Which CDS are in peak #1
+looks like a lot of them aren't annotated as VSGs. Did I miss any with my grep?
+
+Using a cutoff of 10^3 BP away
+```{r}
+brucei_orf_bed
+closest_TE_orf
+
+peak1_CDS = left_join(brucei_orf_bed, closest_TE_orf, by = c("gene_id"= "surf_id", "contig")) %>% 
+  filter(closest_TE_distance<10E3) %>% 
+  mutate(CDS_id = str_extract(gene, "(?<=Parent=).*(?=;gene)")) %>% 
+  select(CDS_id)
+test = Biostrings::readDNAStringSet("../../reference_genomes/TriTrypDB-64_TbruceiLister427_2018_AnnotatedCDSs.fasta")  %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "name") %>% 
+  select(name) %>% 
+  mutate(CDS_id = str_extract(name, "^.{17}")) %>% 
+  right_join(peak1_CDS) %>% 
+  mutate(product = str_extract(name, "(?<=product=).*(?=location)")) %>% 
+  select(product)
+
+test %>% write.csv("./tbrucei_peak1.csv")
+  
+test= table(test$product) %>% as.data.frame() #%>%   write.csv("./tbrucei_peak1_table.csv")
+
+```
+
+
+
+
+
+
+
+
