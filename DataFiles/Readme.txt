@@ -9,3 +9,4 @@ MGF_cds.bed: bed file format of annotated multigene family members in the Tulahu
 Brucei427_genome_clean.fasta.mod.EDTA.TEanno.gff3: Transposable element annotation in the 427 genome produced by EDTA 
 Brazil_genome_clean.fasta.mod.EDTA.TEanno.gff3: Transposable element annotation in the Brazil A4 genome produced by EDTA 
 Berenice_genome_clean.fasta.mod.EDTA.TEanno.gff3: Transposable element annotation in the Berenice genome produced by EDTA 
+cds_combined_MGF_clean.gff : Same as cds_combined_clean.gff, but with an additional column containing the results of the blast-based MGF scan annotating these genes as feature identified by another method.
