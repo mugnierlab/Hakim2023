@@ -10,3 +10,6 @@ surface_proteins.Rmd: R markdown that has code for calling multi-gene families
 TE_forgh.Rmd: R markdown that analyses transposable element in the Tulahuen genome
 
 TE_ORF_ref_strain.Rmd: R markdown that contains code for repeating the same TE analysis in the Tulahuen genome on the Brazil A4, Berenice, and T. brucei 427 genomes.
+
+Polish_longread.sh: SH script to run NextPolish
+run.cfg: config file with all nextdenovo settings for assembly
